@@ -1,0 +1,9 @@
+node_modules/
+package-lock.json
+logs/
+*.log
+npm-debug.log*
+walletKey.pem
+.vscode/
+.idea/
+.DS_Store

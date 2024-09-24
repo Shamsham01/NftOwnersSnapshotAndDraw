@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: javascript-api
+    env: node
+    plan: free
+    buildCommand: 'npm install && npm install express body-parser axios'
+    startCommand: 'node index.js'
+    envVars:
+      - key: API_PROVIDER
+        value: "https://api.multiversx.com"
+      - key: CHAIN
+        value: "mainnet"
+      - key: SECURE_TOKEN
+        sync: false
+    secretFiles:
+      - path: /etc/secrets/walletKey.pem
+    autoDeploy: true
+    region: frankfurt
