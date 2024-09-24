@@ -12,7 +12,5 @@ services:
         value: "mainnet"
       - key: SECURE_TOKEN
         sync: false
-    secretFiles:
-      - path: /etc/secrets/walletKey.pem
     autoDeploy: true
     region: frankfurt
