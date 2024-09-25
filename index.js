@@ -1,6 +1,6 @@
 const express = require('express');
 const bodyParser = require('body-parser');
-const fetch = require('cross-fetch');
+const fetch = require('node-fetch');
 const { Address } = require('@multiversx/sdk-core');
 const pThrottle = require('p-throttle');
 
