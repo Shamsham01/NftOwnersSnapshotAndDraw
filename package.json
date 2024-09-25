@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "Node.js API for executing JavaScript code and handling transactions on MultiversX.",
   "main": "index.js",
+  "type": "module",
   "scripts": {
     "start": "node index.js"
   },
