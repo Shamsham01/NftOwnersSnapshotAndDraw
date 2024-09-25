@@ -1,8 +1,11 @@
-const express = require('express');
-const bodyParser = require('body-parser');
-const fetch = require('node-fetch');
-const { Address } = require('@multiversx/sdk-core');
-const pThrottle = require('p-throttle');
+import { Address } from '@multiversx/sdk-core';
+import fetch from 'node-fetch';
+import ora from 'ora';
+import pThrottle from 'p-throttle';
+import express from 'express';
+import bodyParser from 'body-parser';
+import { ProxyNetworkProvider } from '@multiversx/sdk-network-providers';
+import { UserSigner } from '@multiversx/sdk-wallet';
 
 const app = express();
 const PORT = process.env.PORT || 10000;
