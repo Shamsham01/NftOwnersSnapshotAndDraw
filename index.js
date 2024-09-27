@@ -1,10 +1,11 @@
 import { Address } from '@multiversx/sdk-core';
 import fetch from 'node-fetch';
+import ora from 'ora';
+import pThrottle from 'p-throttle';
 import express from 'express';
 import bodyParser from 'body-parser';
 import { ProxyNetworkProvider } from '@multiversx/sdk-network-providers';
 import { UserSigner } from '@multiversx/sdk-wallet';
-import pThrottle from 'p-throttle';  // Importing p-throttle
 
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -29,71 +30,84 @@ const checkToken = (req, res, next) => {
 
 // Helper function to detect if the address is a Smart Contract
 const isSmartContractAddress = (address) => {
+    // Detect SC addresses like 'erd1qqqqqqqqqqqqq...'
     return address.startsWith('erd1qqqqqqqqqqqqq');
 };
 
 // Helper function to fetch NFT owners
 const fetchNftOwners = async (collectionTicker, includeSmartContracts) => {
-    try {
-        let tokensNumber = '0';
-        const addressesArr = [];
+    let tokensNumber = '0';
+    const addressesArr = [];
 
-        const response = await fetch(
-            `${apiProvider.mainnet}/collections/${collectionTicker}/nfts/count`
-        );
-        tokensNumber = await response.text();
+    const response = await fetch(
+        `${apiProvider.mainnet}/collections/${collectionTicker}/nfts/count`
+    );
+    tokensNumber = await response.text();
 
-        const makeCalls = () =>
-            new Promise((resolve) => {
-                const repeats = Math.ceil(Number(tokensNumber) / MAX_SIZE);
-                let madeRequests = 0;
+    const makeCalls = () =>
+        new Promise((resolve) => {
+            const repeats = Math.ceil(Number(tokensNumber) / MAX_SIZE);
+            const throttle = pThrottle({
+                limit: 5,
+                interval: 1000,
+            });
 
-                const throttle = pThrottle({
-                    limit: 5,
-                    interval: 1000,
-                });
+            let madeRequests = 0;
 
-                const throttledCall = throttle(async (index) => {
-                    const response = await fetch(
-                        `${apiProvider.mainnet}/collections/${collectionTicker}/nfts?withOwner=true&from=${
-                            index * MAX_SIZE
-                        }&size=${MAX_SIZE}`
-                    );
-                    const data = await response.json();
+            const throttled = throttle(async (index) => {
+                const response = await fetch(
+                    `${apiProvider.mainnet}/collections/${collectionTicker}/nfts?withOwner=true&from=${
+                        index * MAX_SIZE
+                    }&size=${MAX_SIZE}`
+                );
+                const data = await response.json();
 
-                    const addrs = data.map((token) => ({
-                        owner: token.owner,
-                        identifier: token.identifier,
-                        attributes: token.attributes || [],  // Get the attributes from the API response
-                    }));
+                const addrs = data.map((token) => ({
+                    owner: token.owner,
+                    identifier: token.identifier,
+                    attributes: token.metadata.attributes || [],  // Ensure attributes are captured
+                    metadataFileName: getMetadataFileName(token.attributes),  // Extract metadata file name
+                }));
 
-                    addressesArr.push(addrs);
-                    madeRequests++;
-                    if (madeRequests >= repeats) {
-                        return resolve(addressesArr.flat());
-                    }
-                });
-
-                for (let step = 0; step < repeats; step++) {
-                    throttledCall(step);
+                addressesArr.push(addrs);
+                madeRequests++;
+                if (madeRequests >= repeats) {
+                    return resolve(addressesArr.flat());
                 }
             });
 
-        let addresses = await makeCalls();
+            for (let step = 0; step < repeats; step++) {
+                throttled(step);
+            }
+        });
 
-        // Filter out smart contracts if includeSmartContracts is false
-        if (!includeSmartContracts) {
-            addresses = addresses.filter(
-                (addrObj) => 
-                    typeof addrObj.owner === 'string' && !isSmartContractAddress(addrObj.owner)
-            );
-        }
+    let addresses = await makeCalls();
 
-        return addresses;
-    } catch (error) {
-        console.error('Error fetching NFT owners:', error);  // Log the error
-        throw new Error('Failed to fetch NFT owners');
+    // Filter out smart contracts if includeSmartContracts is false
+    if (!includeSmartContracts) {
+        addresses = addresses.filter(
+            (addrObj) => 
+                typeof addrObj.owner === 'string' && !isSmartContractAddress(addrObj.owner)
+        );
     }
+
+    return addresses;
+};
+
+// Helper function to decode metadata attributes and get the file name
+const getMetadataFileName = (attributes) => {
+    const attrsDecoded = attributes
+        ? Buffer.from(attributes, 'base64').toString()
+        : undefined;
+    if (!attrsDecoded) return '';
+
+    const metadataKey = attrsDecoded
+        .split(';')
+        .filter((item) => item.includes('metadata'))?.[0];
+
+    if (!metadataKey) return '';
+
+    return metadataKey.split('/')?.[1].split('.')?.[0];
 };
 
 // Route for snapshotDraw
@@ -110,22 +124,23 @@ app.post('/snapshotDraw', checkToken, async (req, res) => {
             return res.status(404).json({ error: 'No addresses found' });
         }
 
+        // Debug: log the addresses fetched
+        console.log('Fetched addresses:', JSON.stringify(addresses, null, 2));
+
         // Filter by traitType and traitValue if provided
         if (traitType && traitValue) {
             addresses = addresses.filter((item) =>
-                Array.isArray(item.attributes) && 
-                item.attributes.some(attribute =>
-                    attribute.trait_type === traitType && attribute.value === traitValue
-                )
+                Array.isArray(item.attributes) &&
+                item.attributes.some(attribute => {
+                    // Debug: log each attribute for analysis
+                    console.log('Checking attribute:', attribute);
+                    return attribute.trait_type === traitType && attribute.value === traitValue;
+                })
             );
         }
 
-        // Filter by fileNamesList if provided
-        if (fileNamesList && fileNamesList.length > 0) {
-            addresses = addresses.filter((item) =>
-                fileNamesList.includes(item.identifier)  // Assuming `identifier` is the unique NFT ID
-            );
-        }
+        // Debug: log the filtered addresses
+        console.log('Filtered addresses:', JSON.stringify(addresses, null, 2));
 
         // If no NFTs are left after filtering
         if (addresses.length === 0) {
@@ -141,7 +156,7 @@ app.post('/snapshotDraw', checkToken, async (req, res) => {
             winners.push({
                 owner: winner.owner,
                 identifier: winner.identifier,
-                attributes: winner.attributes,
+                metadataFileName: winner.metadataFileName,
             });
         });
 
@@ -150,7 +165,7 @@ app.post('/snapshotDraw', checkToken, async (req, res) => {
             message: `${numberOfWinners} winners have been selected from collection ${collectionTicker}.`,
         });
     } catch (error) {
-        console.error('Error during snapshotDraw:', error);  // Log the error
+        console.error('Error during snapshotDraw:', error);  // Log the error details
         res.status(500).json({ error: error.message });
     }
 });
