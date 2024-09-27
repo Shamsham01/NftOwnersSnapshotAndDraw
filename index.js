@@ -112,7 +112,7 @@ const getMetadataFileName = (attributes) => {
 // Route for snapshotDraw
 app.post('/snapshotDraw', checkToken, async (req, res) => {
     try {
-        const { collectionTicker, numberOfWinners, includeSmartContracts, fileNamesList } = req.body;
+        const { collectionTicker, numberOfWinners, includeSmartContracts, nftAttributes, fileNamesList } = req.body;
 
         // Fetch NFT owners
         let addresses = await fetchNftOwners(collectionTicker, includeSmartContracts);
@@ -120,11 +120,24 @@ app.post('/snapshotDraw', checkToken, async (req, res) => {
             return res.status(404).json({ error: 'No addresses found' });
         }
 
+        // Filter by nftAttributes (metadataFileName) if provided
+        if (nftAttributes && nftAttributes.length > 0) {
+            const formattedAttributes = nftAttributes.map(String);  // Ensure attributes are strings
+            addresses = addresses.filter((item) =>
+                formattedAttributes.includes(item.metadataFileName)
+            );
+        }
+
         // Filter by fileNamesList if provided
         if (fileNamesList && fileNamesList.length > 0) {
             addresses = addresses.filter((item) =>
                 fileNamesList.includes(item.metadataFileName)
             );
+        }
+
+        // If no NFTs are left after filtering
+        if (addresses.length === 0) {
+            return res.status(404).json({ error: 'No NFTs found matching the criteria' });
         }
 
         // Select random winners
@@ -147,9 +160,4 @@ app.post('/snapshotDraw', checkToken, async (req, res) => {
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
-});
-
-// Start the server
-app.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
 });
