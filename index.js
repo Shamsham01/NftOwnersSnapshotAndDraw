@@ -161,3 +161,8 @@ app.post('/snapshotDraw', checkToken, async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 });
+
+// This part starts the server and binds it to the defined port
+app.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
+});
