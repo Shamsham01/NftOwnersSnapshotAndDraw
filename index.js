@@ -113,6 +113,7 @@ app.post('/snapshotDraw', checkToken, async (req, res) => {
         // Filter by traitType and traitValue if provided
         if (traitType && traitValue) {
             addresses = addresses.filter((item) =>
+                Array.isArray(item.attributes) && 
                 item.attributes.some(attribute =>
                     attribute.trait_type === traitType && attribute.value === traitValue
                 )
