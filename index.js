@@ -72,7 +72,7 @@ const fetchNftOwners = async (collectionTicker, includeSmartContracts) => {
                     owner: token.owner,
                     identifier: token.identifier,
                     metadataFileName: getMetadataFileName(token.attributes),
-                    attributes: token.attributes
+                    attributes: token.metadata ? JSON.parse(Buffer.from(token.metadata, 'base64').toString()) : []
                 }));
 
                 addressesArr.push(addrs);
