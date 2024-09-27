@@ -15,7 +15,8 @@
     "express": "^4.19.2",
     "node-fetch": "^2.6.1",
     "ora": "^5.4.1",
-    "p-throttle": "^5.0.0"
+    "p-throttle": "^5.0.0",
+    "fast-csv": "^4.3.6"
   },
   "devDependencies": {
     "@types/node": "^18.0.6"
