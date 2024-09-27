@@ -28,8 +28,14 @@ const checkToken = (req, res, next) => {
     }
 };
 
+// Helper function to detect if the address is a Smart Contract
+const isSmartContractAddress = (address) => {
+    // Detect SC addresses like 'erd1qqqqqqqqqqqqq...'
+    return address.startsWith('erd1qqqqqqqqqqqqq');
+};
+
 // Helper function to fetch NFT owners
-const fetchNftOwners = async (collectionTicker, noSmartContracts) => {
+const fetchNftOwners = async (collectionTicker, includeSmartContracts) => {
     let tokensNumber = '0';
     const addressesArr = [];
 
@@ -76,20 +82,13 @@ const fetchNftOwners = async (collectionTicker, noSmartContracts) => {
 
     let addresses = await makeCalls();
 
-    // Log the addresses before filtering
-    console.log("Addresses before filtering:", addresses);
-
-    // Enhanced smart contract filtering
-    if (noSmartContracts) {
-        addresses = addresses.filter((addrObj) => {
-            const isContract = Address.isValidBech32(addrObj.owner) && Address.fromBech32(addrObj.owner).isContractAddress();
-            console.log(`Checking address: ${addrObj.owner}, Is contract: ${isContract}`);
-            return !isContract;
-        });
+    // Filter out smart contracts if includeSmartContracts is false
+    if (!includeSmartContracts) {
+        addresses = addresses.filter(
+            (addrObj) => 
+                typeof addrObj.owner === 'string' && !isSmartContractAddress(addrObj.owner)
+        );
     }
-
-    // Log the addresses after filtering
-    console.log("Addresses after filtering:", addresses);
 
     return addresses;
 };
@@ -113,10 +112,10 @@ const getMetadataFileName = (attributes) => {
 // Route for snapshotDraw
 app.post('/snapshotDraw', checkToken, async (req, res) => {
     try {
-        const { collectionTicker, numberOfWinners, noSmartContracts, fileNamesList } = req.body;
+        const { collectionTicker, numberOfWinners, includeSmartContracts, fileNamesList } = req.body;
 
         // Fetch NFT owners
-        let addresses = await fetchNftOwners(collectionTicker, noSmartContracts);
+        let addresses = await fetchNftOwners(collectionTicker, includeSmartContracts);
         if (addresses.length === 0) {
             return res.status(404).json({ error: 'No addresses found' });
         }
