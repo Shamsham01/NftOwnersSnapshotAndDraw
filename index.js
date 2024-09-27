@@ -41,10 +41,13 @@ const fetchNftOwners = async (collectionTicker, includeSmartContracts) => {
     let tokensNumber = '0';
     const addressesArr = [];
 
+    console.log(`Fetching NFT count for collection ${collectionTicker}`); // Debug
+
     const response = await fetch(
         `${apiProvider.mainnet}/collections/${collectionTicker}/nfts/count`
     );
     tokensNumber = await response.text();
+    console.log(`Total NFTs: ${tokensNumber}`); // Debug
 
     const makeCalls = () =>
         new Promise((resolve) => {
@@ -63,12 +66,13 @@ const fetchNftOwners = async (collectionTicker, includeSmartContracts) => {
                     }&size=${MAX_SIZE}`
                 );
                 const data = await response.json();
+                console.log(`Fetched ${data.length} NFTs in batch ${index + 1}`); // Debug
 
                 const addrs = data.map((token) => ({
                     owner: token.owner,
                     identifier: token.identifier,
-                    metadataFileName: getMetadataFileName(token.attributes),  // Extract metadata file name
-                    attributes: token.attributes  // Save full attributes for filtering
+                    metadataFileName: getMetadataFileName(token.attributes),
+                    attributes: token.attributes
                 }));
 
                 addressesArr.push(addrs);
@@ -84,14 +88,16 @@ const fetchNftOwners = async (collectionTicker, includeSmartContracts) => {
         });
 
     let addresses = await makeCalls();
+    console.log(`Fetched ${addresses.length} total NFT owners`); // Debug
 
-    // Filter out smart contracts if includeSmartContracts is false
     if (!includeSmartContracts) {
         addresses = addresses.filter(
-            (addrObj) => 
+            (addrObj) =>
                 typeof addrObj.owner === 'string' && !isSmartContractAddress(addrObj.owner)
         );
     }
+
+    console.log(`${addresses.length} addresses after smart contract filtering`); // Debug
 
     return addresses;
 };
@@ -134,8 +140,13 @@ app.post('/snapshotDraw', checkToken, async (req, res) => {
         const { collectionTicker, numberOfWinners, includeSmartContracts, traitType, traitValue, fileNamesList } = req.body;
 
         // Fetch NFT owners
+        console.log(`Fetching NFT owners for collection ${collectionTicker}...`); // Debug
         let addresses = await fetchNftOwners(collectionTicker, includeSmartContracts);
+        
+        console.log(`Fetched ${addresses.length} NFT owners`); // Debug
+
         if (addresses.length === 0) {
+            console.log('No addresses found'); // Debug
             return res.status(404).json({ error: 'No addresses found' });
         }
 
@@ -148,6 +159,7 @@ app.post('/snapshotDraw', checkToken, async (req, res) => {
                     return attribute.trait_type === traitType && attribute.value === traitValue;
                 })
             );
+            console.log(`Filtered to ${addresses.length} addresses after traitType and traitValue filtering`); // Debug
         }
 
         // Filter by fileNamesList if provided
@@ -155,14 +167,17 @@ app.post('/snapshotDraw', checkToken, async (req, res) => {
             addresses = addresses.filter((item) =>
                 fileNamesList.includes(item.metadataFileName)
             );
+            console.log(`Filtered to ${addresses.length} addresses after fileNamesList filtering`); // Debug
         }
 
         // If no NFTs are left after filtering
         if (addresses.length === 0) {
+            console.log('No NFTs found matching the criteria'); // Debug
             return res.status(404).json({ error: 'No NFTs found matching the criteria' });
         }
 
         // Select random winners
+        console.log('Selecting random winners'); // Debug
         const winners = [];
         const shuffled = addresses.sort(() => 0.5 - Math.random());
         const selected = shuffled.slice(0, numberOfWinners);
@@ -175,9 +190,21 @@ app.post('/snapshotDraw', checkToken, async (req, res) => {
             });
         });
 
+        // Generate CSV with the snapshot of the draw
+        const csvData = addresses.map((item) => ({
+            owner: item.owner,
+            identifier: item.identifier,
+            metadataFileName: item.metadataFileName
+        }));
+
+        const csvFilePath = `${__dirname}/snapshot_${Date.now()}.csv`;
+        generateCsv(csvData, csvFilePath);
+
+        console.log(`Selected ${winners.length} winners`); // Debug
         res.json({
             winners,
             message: `${numberOfWinners} winners have been selected from collection ${collectionTicker}.`,
+            csvFilePath: csvFilePath // Return CSV file path
         });
     } catch (error) {
         console.error('Error during snapshotDraw:', error);
