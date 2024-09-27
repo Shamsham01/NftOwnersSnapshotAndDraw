@@ -6,6 +6,8 @@ import express from 'express';
 import bodyParser from 'body-parser';
 import { ProxyNetworkProvider } from '@multiversx/sdk-network-providers';
 import { UserSigner } from '@multiversx/sdk-wallet';
+import fs from 'fs'; // Required for file system operations
+import { format as formatCsv } from 'fast-csv'; // Required for CSV generation
 
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -65,8 +67,8 @@ const fetchNftOwners = async (collectionTicker, includeSmartContracts) => {
                 const addrs = data.map((token) => ({
                     owner: token.owner,
                     identifier: token.identifier,
-                    attributes: token.metadata.attributes || [],  // Ensure attributes are captured
                     metadataFileName: getMetadataFileName(token.attributes),  // Extract metadata file name
+                    attributes: token.attributes  // Save full attributes for filtering
                 }));
 
                 addressesArr.push(addrs);
@@ -110,22 +112,32 @@ const getMetadataFileName = (attributes) => {
     return metadataKey.split('/')?.[1].split('.')?.[0];
 };
 
+// Function to generate CSV file
+const generateCsv = (data, filePath) => {
+    const csvStream = formatCsv({ headers: true });
+    const writableStream = fs.createWriteStream(filePath);
+
+    writableStream.on('finish', () => {
+        console.log(`CSV file generated at ${filePath}`);
+    });
+
+    csvStream.pipe(writableStream);
+    data.forEach((row) => {
+        csvStream.write(row);
+    });
+    csvStream.end();
+};
+
 // Route for snapshotDraw
 app.post('/snapshotDraw', checkToken, async (req, res) => {
     try {
         const { collectionTicker, numberOfWinners, includeSmartContracts, traitType, traitValue, fileNamesList } = req.body;
-
-        // Debug: log input parameters
-        console.log('Received request with params:', req.body);
 
         // Fetch NFT owners
         let addresses = await fetchNftOwners(collectionTicker, includeSmartContracts);
         if (addresses.length === 0) {
             return res.status(404).json({ error: 'No addresses found' });
         }
-
-        // Debug: log the addresses fetched
-        console.log('Fetched addresses:', JSON.stringify(addresses, null, 2));
 
         // Filter by traitType and traitValue if provided
         if (traitType && traitValue) {
@@ -139,8 +151,12 @@ app.post('/snapshotDraw', checkToken, async (req, res) => {
             );
         }
 
-        // Debug: log the filtered addresses
-        console.log('Filtered addresses:', JSON.stringify(addresses, null, 2));
+        // Filter by fileNamesList if provided
+        if (fileNamesList && fileNamesList.length > 0) {
+            addresses = addresses.filter((item) =>
+                fileNamesList.includes(item.metadataFileName)
+            );
+        }
 
         // If no NFTs are left after filtering
         if (addresses.length === 0) {
@@ -160,12 +176,21 @@ app.post('/snapshotDraw', checkToken, async (req, res) => {
             });
         });
 
+        // Generate CSV proof of the draw
+        const csvData = addresses.map((item) => ({
+            owner: item.owner,
+            identifier: item.identifier,
+            metadataFileName: item.metadataFileName
+        }));
+        const csvFilePath = `snapshot_${collectionTicker}_proof.csv`;
+        generateCsv(csvData, csvFilePath);
+
         res.json({
             winners,
             message: `${numberOfWinners} winners have been selected from collection ${collectionTicker}.`,
+            csvFile: csvFilePath
         });
     } catch (error) {
-        console.error('Error during snapshotDraw:', error);  // Log the error details
         res.status(500).json({ error: error.message });
     }
 });
