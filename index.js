@@ -133,11 +133,17 @@ app.post('/snapshotDraw', checkToken, async (req, res) => {
     try {
         const { collectionTicker, numberOfWinners, includeSmartContracts, traitType, traitValue, fileNamesList } = req.body;
 
+        // Debug: log input parameters
+        console.log('Received request with params:', req.body);
+
         // Fetch NFT owners
         let addresses = await fetchNftOwners(collectionTicker, includeSmartContracts);
         if (addresses.length === 0) {
             return res.status(404).json({ error: 'No addresses found' });
         }
+
+        // Debug: log the addresses fetched
+        console.log('Fetched addresses:', JSON.stringify(addresses, null, 2));
 
         // Filter by traitType and traitValue if provided
         if (traitType && traitValue) {
@@ -151,12 +157,8 @@ app.post('/snapshotDraw', checkToken, async (req, res) => {
             );
         }
 
-        // Filter by fileNamesList if provided
-        if (fileNamesList && fileNamesList.length > 0) {
-            addresses = addresses.filter((item) =>
-                fileNamesList.includes(item.metadataFileName)
-            );
-        }
+        // Debug: log the filtered addresses
+        console.log('Filtered addresses:', JSON.stringify(addresses, null, 2));
 
         // If no NFTs are left after filtering
         if (addresses.length === 0) {
@@ -176,21 +178,12 @@ app.post('/snapshotDraw', checkToken, async (req, res) => {
             });
         });
 
-        // Generate CSV proof of the draw
-        const csvData = addresses.map((item) => ({
-            owner: item.owner,
-            identifier: item.identifier,
-            metadataFileName: item.metadataFileName
-        }));
-        const csvFilePath = `snapshot_${collectionTicker}_proof.csv`;
-        generateCsv(csvData, csvFilePath);
-
         res.json({
             winners,
             message: `${numberOfWinners} winners have been selected from collection ${collectionTicker}.`,
-            csvFile: csvFilePath
         });
     } catch (error) {
+        console.error('Error during snapshotDraw:', error);  // Log the error details
         res.status(500).json({ error: error.message });
     }
 });
