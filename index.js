@@ -33,67 +33,75 @@ const isSmartContractAddress = (address) => {
 
 // Helper function to fetch NFT owners
 const fetchNftOwners = async (collectionTicker, includeSmartContracts) => {
-    let tokensNumber = '0';
-    const addressesArr = [];
+    try {
+        let tokensNumber = '0';
+        const addressesArr = [];
 
-    const response = await fetch(
-        `${apiProvider.mainnet}/collections/${collectionTicker}/nfts/count`
-    );
-    tokensNumber = await response.text();
+        const response = await fetch(
+            `${apiProvider.mainnet}/collections/${collectionTicker}/nfts/count`
+        );
+        tokensNumber = await response.text();
 
-    const makeCalls = () =>
-        new Promise((resolve) => {
-            const repeats = Math.ceil(Number(tokensNumber) / MAX_SIZE);
-            let madeRequests = 0;
+        const makeCalls = () =>
+            new Promise((resolve) => {
+                const repeats = Math.ceil(Number(tokensNumber) / MAX_SIZE);
+                let madeRequests = 0;
 
-            const throttled = pThrottle({
-                limit: 5,
-                interval: 1000,
-            });
+                const throttled = pThrottle({
+                    limit: 5,
+                    interval: 1000,
+                });
 
-            const throttledCall = throttled(async (index) => {
-                const response = await fetch(
-                    `${apiProvider.mainnet}/collections/${collectionTicker}/nfts?withOwner=true&from=${
-                        index * MAX_SIZE
-                    }&size=${MAX_SIZE}`
-                );
-                const data = await response.json();
+                const throttledCall = throttled(async (index) => {
+                    const response = await fetch(
+                        `${apiProvider.mainnet}/collections/${collectionTicker}/nfts?withOwner=true&from=${
+                            index * MAX_SIZE
+                        }&size=${MAX_SIZE}`
+                    );
+                    const data = await response.json();
 
-                const addrs = data.map((token) => ({
-                    owner: token.owner,
-                    identifier: token.identifier,
-                    attributes: token.attributes || [],  // Get the attributes from the API response
-                }));
+                    const addrs = data.map((token) => ({
+                        owner: token.owner,
+                        identifier: token.identifier,
+                        attributes: token.attributes || [],  // Get the attributes from the API response
+                    }));
 
-                addressesArr.push(addrs);
-                madeRequests++;
-                if (madeRequests >= repeats) {
-                    return resolve(addressesArr.flat());
+                    addressesArr.push(addrs);
+                    madeRequests++;
+                    if (madeRequests >= repeats) {
+                        return resolve(addressesArr.flat());
+                    }
+                });
+
+                for (let step = 0; step < repeats; step++) {
+                    throttledCall(step);
                 }
             });
 
-            for (let step = 0; step < repeats; step++) {
-                throttledCall(step);
-            }
-        });
+        let addresses = await makeCalls();
 
-    let addresses = await makeCalls();
+        // Filter out smart contracts if includeSmartContracts is false
+        if (!includeSmartContracts) {
+            addresses = addresses.filter(
+                (addrObj) =>
+                    typeof addrObj.owner === 'string' && !isSmartContractAddress(addrObj.owner)
+            );
+        }
 
-    // Filter out smart contracts if includeSmartContracts is false
-    if (!includeSmartContracts) {
-        addresses = addresses.filter(
-            (addrObj) =>
-                typeof addrObj.owner === 'string' && !isSmartContractAddress(addrObj.owner)
-        );
+        return addresses;
+    } catch (error) {
+        console.error('Error fetching NFT owners:', error);  // Log the error
+        throw new Error('Failed to fetch NFT owners');
     }
-
-    return addresses;
 };
 
 // Route for snapshotDraw
 app.post('/snapshotDraw', checkToken, async (req, res) => {
     try {
         const { collectionTicker, numberOfWinners, includeSmartContracts, traitType, traitValue, fileNamesList } = req.body;
+
+        // Debug: log input parameters
+        console.log('Received request with params:', req.body);
 
         // Fetch NFT owners
         let addresses = await fetchNftOwners(collectionTicker, includeSmartContracts);
@@ -140,6 +148,7 @@ app.post('/snapshotDraw', checkToken, async (req, res) => {
             message: `${numberOfWinners} winners have been selected from collection ${collectionTicker}.`,
         });
     } catch (error) {
+        console.error('Error during snapshotDraw:', error);  // Log the error
         res.status(500).json({ error: error.message });
     }
 });
