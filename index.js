@@ -1,7 +1,5 @@
 import { Address } from '@multiversx/sdk-core';
 import fetch from 'node-fetch';
-import ora from 'ora';
-import pThrottle from 'p-throttle';
 import express from 'express';
 import bodyParser from 'body-parser';
 import { ProxyNetworkProvider } from '@multiversx/sdk-network-providers';
@@ -30,7 +28,6 @@ const checkToken = (req, res, next) => {
 
 // Helper function to detect if the address is a Smart Contract
 const isSmartContractAddress = (address) => {
-    // Detect SC addresses like 'erd1qqqqqqqqqqqqq...'
     return address.startsWith('erd1qqqqqqqqqqqqq');
 };
 
@@ -47,14 +44,14 @@ const fetchNftOwners = async (collectionTicker, includeSmartContracts) => {
     const makeCalls = () =>
         new Promise((resolve) => {
             const repeats = Math.ceil(Number(tokensNumber) / MAX_SIZE);
-            const throttle = pThrottle({
+            let madeRequests = 0;
+
+            const throttled = pThrottle({
                 limit: 5,
                 interval: 1000,
             });
 
-            let madeRequests = 0;
-
-            const throttled = throttle(async (index) => {
+            const throttledCall = throttled(async (index) => {
                 const response = await fetch(
                     `${apiProvider.mainnet}/collections/${collectionTicker}/nfts?withOwner=true&from=${
                         index * MAX_SIZE
@@ -65,7 +62,7 @@ const fetchNftOwners = async (collectionTicker, includeSmartContracts) => {
                 const addrs = data.map((token) => ({
                     owner: token.owner,
                     identifier: token.identifier,
-                    metadataFileName: getMetadataFileName(token.attributes),  // Extract metadata file name
+                    attributes: token.attributes || [],  // Get the attributes from the API response
                 }));
 
                 addressesArr.push(addrs);
@@ -76,7 +73,7 @@ const fetchNftOwners = async (collectionTicker, includeSmartContracts) => {
             });
 
             for (let step = 0; step < repeats; step++) {
-                throttled(step);
+                throttledCall(step);
             }
         });
 
@@ -85,7 +82,7 @@ const fetchNftOwners = async (collectionTicker, includeSmartContracts) => {
     // Filter out smart contracts if includeSmartContracts is false
     if (!includeSmartContracts) {
         addresses = addresses.filter(
-            (addrObj) => 
+            (addrObj) =>
                 typeof addrObj.owner === 'string' && !isSmartContractAddress(addrObj.owner)
         );
     }
@@ -93,26 +90,10 @@ const fetchNftOwners = async (collectionTicker, includeSmartContracts) => {
     return addresses;
 };
 
-// Helper function to decode metadata attributes and get the file name
-const getMetadataFileName = (attributes) => {
-    const attrsDecoded = attributes
-        ? Buffer.from(attributes, 'base64').toString()
-        : undefined;
-    if (!attrsDecoded) return '';
-
-    const metadataKey = attrsDecoded
-        .split(';')
-        .filter((item) => item.includes('metadata'))?.[0];
-
-    if (!metadataKey) return '';
-
-    return metadataKey.split('/')?.[1].split('.')?.[0];
-};
-
 // Route for snapshotDraw
 app.post('/snapshotDraw', checkToken, async (req, res) => {
     try {
-        const { collectionTicker, numberOfWinners, includeSmartContracts, nftAttributes, fileNamesList } = req.body;
+        const { collectionTicker, numberOfWinners, includeSmartContracts, traitType, traitValue, fileNamesList } = req.body;
 
         // Fetch NFT owners
         let addresses = await fetchNftOwners(collectionTicker, includeSmartContracts);
@@ -120,18 +101,19 @@ app.post('/snapshotDraw', checkToken, async (req, res) => {
             return res.status(404).json({ error: 'No addresses found' });
         }
 
-        // Filter by nftAttributes (metadataFileName) if provided
-        if (nftAttributes && nftAttributes.length > 0) {
-            const formattedAttributes = nftAttributes.map(String);  // Ensure attributes are strings
+        // Filter by traitType and traitValue if provided
+        if (traitType && traitValue) {
             addresses = addresses.filter((item) =>
-                formattedAttributes.includes(item.metadataFileName)
+                item.attributes.some(attribute =>
+                    attribute.trait_type === traitType && attribute.value === traitValue
+                )
             );
         }
 
         // Filter by fileNamesList if provided
         if (fileNamesList && fileNamesList.length > 0) {
             addresses = addresses.filter((item) =>
-                fileNamesList.includes(item.metadataFileName)
+                fileNamesList.includes(item.identifier)  // Assuming `identifier` is the unique NFT ID
             );
         }
 
@@ -149,7 +131,7 @@ app.post('/snapshotDraw', checkToken, async (req, res) => {
             winners.push({
                 owner: winner.owner,
                 identifier: winner.identifier,
-                metadataFileName: winner.metadataFileName,
+                attributes: winner.attributes,
             });
         });
 
@@ -162,7 +144,7 @@ app.post('/snapshotDraw', checkToken, async (req, res) => {
     }
 });
 
-// This part starts the server and binds it to the defined port
+// Start the server
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
 });
