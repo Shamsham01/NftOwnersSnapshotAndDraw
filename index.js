@@ -133,32 +133,29 @@ app.post('/snapshotDraw', checkToken, async (req, res) => {
     try {
         const { collectionTicker, numberOfWinners, includeSmartContracts, traitType, traitValue, fileNamesList } = req.body;
 
-        // Debug: log input parameters
-        console.log('Received request with params:', req.body);
-
         // Fetch NFT owners
         let addresses = await fetchNftOwners(collectionTicker, includeSmartContracts);
         if (addresses.length === 0) {
             return res.status(404).json({ error: 'No addresses found' });
         }
 
-        // Debug: log the addresses fetched
-        console.log('Fetched addresses:', JSON.stringify(addresses, null, 2));
-
         // Filter by traitType and traitValue if provided
         if (traitType && traitValue) {
             addresses = addresses.filter((item) =>
                 Array.isArray(item.attributes) &&
                 item.attributes.some(attribute => {
-                    // Debug: log each attribute for analysis
-                    console.log('Checking attribute:', attribute);
+                    console.log('Checking attribute:', attribute); // Debugging the attributes
                     return attribute.trait_type === traitType && attribute.value === traitValue;
                 })
             );
         }
 
-        // Debug: log the filtered addresses
-        console.log('Filtered addresses:', JSON.stringify(addresses, null, 2));
+        // Filter by fileNamesList if provided
+        if (fileNamesList && fileNamesList.length > 0) {
+            addresses = addresses.filter((item) =>
+                fileNamesList.includes(item.metadataFileName)
+            );
+        }
 
         // If no NFTs are left after filtering
         if (addresses.length === 0) {
@@ -183,7 +180,7 @@ app.post('/snapshotDraw', checkToken, async (req, res) => {
             message: `${numberOfWinners} winners have been selected from collection ${collectionTicker}.`,
         });
     } catch (error) {
-        console.error('Error during snapshotDraw:', error);  // Log the error details
+        console.error('Error during snapshotDraw:', error);
         res.status(500).json({ error: error.message });
     }
 });
