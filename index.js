@@ -76,14 +76,20 @@ const fetchNftOwners = async (collectionTicker, noSmartContracts) => {
 
     let addresses = await makeCalls();
 
+    // Log the addresses before filtering
+    console.log("Addresses before filtering:", addresses);
+
     // Filter out smart contracts if noSmartContracts is true
     if (noSmartContracts) {
-        addresses = addresses.filter(
-            (addrObj) =>
-                typeof addrObj.owner === 'string' &&
-                !Address.fromString(addrObj.owner).isContractAddress()
-        );
+        addresses = addresses.filter((addrObj) => {
+            const isContract = Address.fromString(addrObj.owner).isContractAddress();
+            console.log(`Checking address: ${addrObj.owner}, Is contract: ${isContract}`);
+            return typeof addrObj.owner === 'string' && !isContract;
+        });
     }
+
+    // Log the addresses after filtering
+    console.log("Addresses after filtering:", addresses);
 
     return addresses;
 };
