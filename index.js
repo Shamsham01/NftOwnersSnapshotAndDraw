@@ -104,9 +104,13 @@ const fetchNftOwners = async (collectionTicker, includeSmartContracts) => {
 
 // Helper function to decode metadata attributes and get the file name
 const getMetadataFileName = (attributes) => {
-    const attrsDecoded = attributes
-        ? Buffer.from(attributes, 'base64').toString()
-        : undefined;
+    if (typeof attributes !== 'string') {
+        // If attributes is not a string, return an empty value
+        return '';
+    }
+
+    const attrsDecoded = Buffer.from(attributes, 'base64').toString();
+    
     if (!attrsDecoded) return '';
 
     const metadataKey = attrsDecoded
