@@ -4,6 +4,7 @@ import express from 'express';
 import bodyParser from 'body-parser';
 import { ProxyNetworkProvider } from '@multiversx/sdk-network-providers';
 import { UserSigner } from '@multiversx/sdk-wallet';
+import pThrottle from 'p-throttle';  // Importing p-throttle
 
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -47,12 +48,12 @@ const fetchNftOwners = async (collectionTicker, includeSmartContracts) => {
                 const repeats = Math.ceil(Number(tokensNumber) / MAX_SIZE);
                 let madeRequests = 0;
 
-                const throttled = pThrottle({
+                const throttle = pThrottle({
                     limit: 5,
                     interval: 1000,
                 });
 
-                const throttledCall = throttled(async (index) => {
+                const throttledCall = throttle(async (index) => {
                     const response = await fetch(
                         `${apiProvider.mainnet}/collections/${collectionTicker}/nfts?withOwner=true&from=${
                             index * MAX_SIZE
@@ -83,7 +84,7 @@ const fetchNftOwners = async (collectionTicker, includeSmartContracts) => {
         // Filter out smart contracts if includeSmartContracts is false
         if (!includeSmartContracts) {
             addresses = addresses.filter(
-                (addrObj) =>
+                (addrObj) => 
                     typeof addrObj.owner === 'string' && !isSmartContractAddress(addrObj.owner)
             );
         }
