@@ -13,6 +13,7 @@ const app = express();
 const PORT = process.env.PORT || 10000;
 const SECURE_TOKEN = process.env.SECURE_TOKEN;  // Secure Token for authorization
 const MAX_SIZE = 100;
+const RETRY_LIMIT = 3;  // Retry limit for API requests
 const apiProvider = {
   mainnet: 'https://api.multiversx.com',
   devnet: 'https://devnet-api.multiversx.com',
@@ -35,7 +36,7 @@ const isSmartContractAddress = (address) => {
     return address.startsWith('erd1qqqqqqqqqqqqq');
 };
 
-// Helper function to fetch NFT owners
+// Helper function to fetch NFT owners with retries and error handling
 const fetchNftOwners = async (collectionTicker, includeSmartContracts) => {
     let tokensNumber = '0';
     const addressesArr = [];
@@ -49,31 +50,50 @@ const fetchNftOwners = async (collectionTicker, includeSmartContracts) => {
         new Promise((resolve) => {
             const repeats = Math.ceil(Number(tokensNumber) / MAX_SIZE);
             const throttle = pThrottle({
-                limit: 5,
-                interval: 1000,
+                limit: 2,      // 2 requests per second (per MultiversX API limit)
+                interval: 1000 // 1000 ms (1 second)
             });
 
             let madeRequests = 0;
 
-            const throttled = throttle(async (index) => {
-                const response = await fetch(
-                    `${apiProvider.mainnet}/collections/${collectionTicker}/nfts?withOwner=true&from=${
-                        index * MAX_SIZE
-                    }&size=${MAX_SIZE}`
-                );
-                const data = await response.json();
+            const throttled = throttle(async (index, retries = 0) => {
+                try {
+                    const response = await fetch(
+                        `${apiProvider.mainnet}/collections/${collectionTicker}/nfts?withOwner=true&from=${
+                            index * MAX_SIZE
+                        }&size=${MAX_SIZE}`
+                    );
+                    
+                    if (!response.ok) throw new Error(`HTTP Error ${response.status}`);
 
-                const addrs = data.map((token) => ({
-                    owner: token.owner,
-                    identifier: token.identifier,
-                    metadataFileName: getMetadataFileName(token.attributes),  // Extract metadata file name
-                    attributes: token.metadata?.attributes || []  // Save full attributes for filtering
-                }));
+                    const contentType = response.headers.get('content-type');
+                    if (contentType && contentType.includes('application/json')) {
+                        const data = await response.json();
+                        
+                        const addrs = data.map((token) => ({
+                            owner: token.owner,
+                            identifier: token.identifier,
+                            metadataFileName: getMetadataFileName(token.attributes),  // Extract metadata file name
+                            attributes: token.metadata?.attributes || []  // Save full attributes for filtering
+                        }));
 
-                addressesArr.push(addrs);
-                madeRequests++;
-                if (madeRequests >= repeats) {
-                    return resolve(addressesArr.flat());
+                        addressesArr.push(addrs);
+                        madeRequests++;
+                    } else {
+                        throw new Error('Invalid response type, expected JSON');
+                    }
+
+                    if (madeRequests >= repeats) {
+                        return resolve(addressesArr.flat());
+                    }
+
+                } catch (error) {
+                    if (retries < RETRY_LIMIT) {
+                        console.error(`Retrying request (attempt ${retries + 1}) for batch ${index}: ${error.message}`);
+                        await throttled(index, retries + 1);  // Retry
+                    } else {
+                        console.error(`Failed after ${RETRY_LIMIT} attempts for batch ${index}: ${error.message}`);
+                    }
                 }
             });
 
