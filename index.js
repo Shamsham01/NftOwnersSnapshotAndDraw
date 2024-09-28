@@ -6,8 +6,8 @@ import express from 'express';
 import bodyParser from 'body-parser';
 import { ProxyNetworkProvider } from '@multiversx/sdk-network-providers';
 import { UserSigner } from '@multiversx/sdk-wallet';
-import fs from 'fs'; // Required for file system operations
 import { format as formatCsv } from 'fast-csv'; // Required for CSV generation
+import { Readable } from 'stream'; // For converting CSV data to stream for API response
 
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -32,7 +32,6 @@ const checkToken = (req, res, next) => {
 
 // Helper function to detect if the address is a Smart Contract
 const isSmartContractAddress = (address) => {
-    // Detect SC addresses like 'erd1qqqqqqqqqqqqq...'
     return address.startsWith('erd1qqqqqqqqqqqqq');
 };
 
@@ -85,7 +84,6 @@ const fetchNftOwners = async (collectionTicker, includeSmartContracts) => {
 
     let addresses = await makeCalls();
 
-    // Filter out smart contracts if includeSmartContracts is false
     if (!includeSmartContracts) {
         addresses = addresses.filter(
             (addrObj) => 
@@ -112,20 +110,25 @@ const getMetadataFileName = (attributes) => {
     return metadataKey.split('/')?.[1].split('.')?.[0];
 };
 
-// Function to generate CSV file
-const generateCsv = (data, filePath) => {
+// Function to generate CSV content in memory (includes all NFTs in the snapshot)
+const generateCsv = async (data) => {
     const csvStream = formatCsv({ headers: true });
-    const writableStream = fs.createWriteStream(filePath);
+    const readable = new Readable({ read() {} });
 
-    writableStream.on('finish', () => {
-        console.log(`CSV file generated at ${filePath}`);
-    });
+    csvStream.pipe(readable);
 
-    csvStream.pipe(writableStream);
     data.forEach((row) => {
         csvStream.write(row);
     });
     csvStream.end();
+
+    const chunks = [];
+    for await (const chunk of readable) {
+        chunks.push(chunk);
+    }
+
+    const csvBuffer = Buffer.concat(chunks);
+    return csvBuffer.toString('base64');
 };
 
 // Route for snapshotDraw
@@ -144,8 +147,6 @@ app.post('/snapshotDraw', checkToken, async (req, res) => {
             addresses = addresses.filter((item) =>
                 Array.isArray(item.attributes) &&
                 item.attributes.some(attribute => {
-                    // Debugging the attributes
-                    console.log('Checking attribute:', attribute);
                     return attribute.trait_type === traitType && attribute.value === traitValue;
                 })
             );
@@ -158,7 +159,6 @@ app.post('/snapshotDraw', checkToken, async (req, res) => {
             );
         }
 
-        // If no NFTs are left after filtering
         if (addresses.length === 0) {
             return res.status(404).json({ error: 'No NFTs found matching the criteria' });
         }
@@ -176,14 +176,14 @@ app.post('/snapshotDraw', checkToken, async (req, res) => {
             });
         });
 
-        // Generate CSV for snapshot data
-        const csvFilePath = `snapshot_${collectionTicker}_winners.csv`;
-        generateCsv(winners, csvFilePath);
+        // Generate CSV in base64 with all NFTs in the snapshot (not just winners)
+        const csvBase64 = await generateCsv(addresses);
 
+        // Respond with the full NFT snapshot in base64 CSV and the winners
         res.json({
             winners,
             message: `${numberOfWinners} winners have been selected from collection ${collectionTicker}.`,
-            csvFilePath: csvFilePath, // Provide path to the CSV file
+            csvBase64, // Returning the base64 encoded CSV of all NFTs considered in the draw
         });
     } catch (error) {
         console.error('Error during snapshotDraw:', error);
