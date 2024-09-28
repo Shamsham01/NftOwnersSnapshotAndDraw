@@ -110,7 +110,7 @@ const getMetadataFileName = (attributes) => {
     return metadataKey.split('/')?.[1].split('.')?.[0];
 };
 
-// Function to generate CSV data in memory (includes all NFTs in the snapshot)
+// Function to generate CSV data as a string (includes all NFTs in the snapshot)
 const generateCsv = async (data) => {
     const csvData = [];
 
@@ -127,8 +127,8 @@ const generateCsv = async (data) => {
         const csvStream = formatCsv({ headers: true });
         const chunks = [];
 
-        csvStream.on('data', (chunk) => chunks.push(chunk));
-        csvStream.on('end', () => resolve(Buffer.concat(chunks).toString('base64')));
+        csvStream.on('data', (chunk) => chunks.push(chunk.toString()));
+        csvStream.on('end', () => resolve(chunks.join('')));
         csvStream.on('error', reject);
 
         csvData.forEach((row) => csvStream.write(row));
@@ -181,14 +181,14 @@ app.post('/snapshotDraw', checkToken, async (req, res) => {
             });
         });
 
-        // Generate CSV in base64 with all NFTs in the snapshot (not just winners)
-        const csvBase64 = await generateCsv(addresses);
+        // Generate CSV as a string with all NFTs in the snapshot (not just winners)
+        const csvString = await generateCsv(addresses);
 
-        // Respond with the full NFT snapshot in base64 CSV and the winners
+        // Respond with the full NFT snapshot in CSV string and the winners
         res.json({
             winners,
             message: `${numberOfWinners} winners have been selected from collection ${collectionTicker}.`,
-            csvBase64, // Returning the base64 encoded CSV of all NFTs considered in the draw
+            csvString, // Returning the CSV string of all NFTs considered in the draw
         });
     } catch (error) {
         console.error('Error during snapshotDraw:', error);
