@@ -6,8 +6,8 @@ import express from 'express';
 import bodyParser from 'body-parser';
 import { ProxyNetworkProvider } from '@multiversx/sdk-network-providers';
 import { UserSigner } from '@multiversx/sdk-wallet';
-import { format as formatCsv } from 'fast-csv'; // Required for CSV generation
-import { Readable } from 'stream'; // For converting CSV data to stream for API response
+import { format as formatCsv } from 'fast-csv';
+import { Readable } from 'stream';
 
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -110,25 +110,30 @@ const getMetadataFileName = (attributes) => {
     return metadataKey.split('/')?.[1].split('.')?.[0];
 };
 
-// Function to generate CSV content in memory (includes all NFTs in the snapshot)
+// Function to generate CSV data in memory (includes all NFTs in the snapshot)
 const generateCsv = async (data) => {
-    const csvStream = formatCsv({ headers: true });
-    const readable = new Readable({ read() {} });
-
-    csvStream.pipe(readable);
+    const csvData = [];
 
     data.forEach((row) => {
-        csvStream.write(row);
+        csvData.push({
+            owner: row.owner,
+            identifier: row.identifier,
+            metadataFileName: row.metadataFileName,
+            attributes: JSON.stringify(row.attributes) // Store attributes as JSON string
+        });
     });
-    csvStream.end();
 
-    const chunks = [];
-    for await (const chunk of readable) {
-        chunks.push(chunk);
-    }
+    return new Promise((resolve, reject) => {
+        const csvStream = formatCsv({ headers: true });
+        const chunks = [];
 
-    const csvBuffer = Buffer.concat(chunks);
-    return csvBuffer.toString('base64');
+        csvStream.on('data', (chunk) => chunks.push(chunk));
+        csvStream.on('end', () => resolve(Buffer.concat(chunks).toString('base64')));
+        csvStream.on('error', reject);
+
+        csvData.forEach((row) => csvStream.write(row));
+        csvStream.end();
+    });
 };
 
 // Route for snapshotDraw
