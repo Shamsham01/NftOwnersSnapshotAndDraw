@@ -21,7 +21,7 @@ const apiProvider = {
 
 app.use(bodyParser.json());  // Support JSON-encoded bodies
 
-// Middleware to check authorization token
+// Middleware to check authorization token for protected routes
 const checkToken = (req, res, next) => {
     const token = req.headers.authorization;
     if (token === `Bearer ${SECURE_TOKEN}`) {
@@ -30,6 +30,21 @@ const checkToken = (req, res, next) => {
         res.status(401).json({ error: 'Unauthorized' });
     }
 };
+
+// New Authorization Endpoint for Make.com to verify connection
+app.post('/authorization', (req, res) => {
+    try {
+        const token = req.headers.authorization;
+        // Check if the token matches the secure token in the environment
+        if (token === `Bearer ${SECURE_TOKEN}`) {
+            res.json({ message: "Authorization successful" });
+        } else {
+            res.status(401).json({ error: "Unauthorized" });
+        }
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
 
 // Helper function to detect if the address is a Smart Contract
 const isSmartContractAddress = (address) => {
