@@ -35,7 +35,6 @@ const checkToken = (req, res, next) => {
 app.post('/authorization', (req, res) => {
     try {
         const token = req.headers.authorization;
-        // Check if the token matches the secure token in the environment
         if (token === `Bearer ${SECURE_TOKEN}`) {
             res.json({ message: "Authorization successful" });
         } else {
@@ -227,6 +226,36 @@ app.post('/snapshotDraw', checkToken, async (req, res) => {
         });
     } catch (error) {
         console.error('Error during snapshotDraw:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// New endpoint for Staked NFTs Snapshot & Draw
+app.post('/stakedNftsSnapshotDraw', checkToken, async (req, res) => {
+    try {
+        const { collectionTicker, contractLabel, numberOfWinners } = req.body;
+
+        // Fetch staked NFTs and their owners
+        const stakedData = await fetchStakedNfts(collectionTicker, contractLabel);
+        if (stakedData.length === 0) {
+            return res.status(404).json({ error: 'No staked NFTs found for this collection' });
+        }
+
+        // Random selection of winners
+        const shuffled = stakedData.sort(() => 0.5 - Math.random());
+        const winners = shuffled.slice(0, numberOfWinners);
+
+        // Generate CSV with all staked NFTs
+        const csvString = await generateCsv(stakedData);
+
+        // Response includes selected winners and CSV snapshot
+        res.json({
+            winners,
+            message: `${numberOfWinners} winners have been selected from staked NFTs in collection ${collectionTicker}.`,
+            csvString, // All staked NFTs data as CSV
+        });
+    } catch (error) {
+        console.error('Error during stakedNftsSnapshotDraw:', error);
         res.status(500).json({ error: error.message });
     }
 });
