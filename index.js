@@ -242,91 +242,63 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
         throw new Error("Unsupported contract label");
     }
 
-    let transactions = [];
-    let page = 0;
-    const pageSize = 1000; // Set to 1000 for stability
-    const maxPages = 100; // Limit to 100 pages as needed
-    const maxRetries = 3; // Maximum retries per page on failure
-    const throttle = pThrottle({
-        limit: 1, // 1 request per second for safe pacing
-        interval: 1000,
-    });
-
-    const fetchPage = throttle(async (pageNum, attempt = 1) => {
-        const response = await fetch(
-            `${apiProvider.mainnet}/accounts/${contractAddress}/transfers?status=success&size=${pageSize}&from=${pageNum * pageSize}`
-        );
-
-        if (response.status === 429) {
-            if (attempt <= maxRetries) {
-                console.warn(`Rate limit hit, retrying page ${pageNum} (Attempt ${attempt} of ${maxRetries})`);
-                await new Promise(res => setTimeout(res, 2000 * attempt)); // Exponential backoff
-                return fetchPage(pageNum, attempt + 1);
-            } else {
-                throw new Error(`Rate limit exceeded after ${maxRetries} retries on page ${pageNum}`);
-            }
-        } else if (!response.ok) {
-            console.error(`Failed to fetch data: HTTP Error ${response.status}`);
+    // Helper to fetch data with error handling
+    const fetchData = async (url) => {
+        const response = await fetch(url);
+        if (!response.ok) {
             throw new Error(`HTTP Error ${response.status}`);
         }
-
         return await response.json();
-    });
+    };
 
-    while (page < maxPages) {
-        try {
-            const data = await fetchPage(page);
-            console.log(`Fetched ${data.length} transactions on page ${page}`);
+    try {
+        // Fetch staked NFTs with function=userStake
+        const stakedData = await fetchData(
+            `${apiProvider.mainnet}/accounts/${contractAddress}/transfers?size=9999&token=${collectionTicker}&status=success&function=userStake`
+        );
 
-            if (data.length === 0) break;
-            transactions = transactions.concat(data);
+        // Fetch unstaked NFTs with function=ESDTNFTTransfer
+        const unstakedData = await fetchData(
+            `${apiProvider.mainnet}/accounts/${contractAddress}/transfers?size=9999&token=${collectionTicker}&status=success&function=ESDTNFTTransfer`
+        );
 
-            if (data.length < pageSize) {
-                console.log(`Reached the last page with ${data.length} transactions.`);
-                break;
-            }
+        const stakedNfts = new Map();
 
-            page += 1;
-        } catch (error) {
-            console.error(`Error fetching data on page ${page}:`, error);
-            throw error;
-        }
-    }
-
-    // Process transactions in chronological order
-    transactions.reverse();
-
-    const stakedNfts = new Map();
-
-    transactions.forEach(tx => {
-        if (tx.function === 'userStake') {
+        // Process staked NFTs
+        stakedData.forEach(tx => {
             const stakedItems = tx.action?.arguments?.transfers?.filter(
                 transfer => transfer.collection === collectionTicker
             ) || [];
 
             stakedItems.forEach(item => {
-                if (!stakedNfts.has(item.identifier)) {
-                    stakedNfts.set(item.identifier, {
-                        owner: tx.sender,
-                        identifier: item.identifier
-                    });
-                }
+                stakedNfts.set(item.identifier, {
+                    owner: tx.sender,
+                    identifier: item.identifier
+                });
             });
-        } else if (tx.function === 'ESDTNFTTransfer' && tx.sender === contractAddress) {
+        });
+
+        // Process unstaked NFTs (remove from stakedNfts if found)
+        unstakedData.forEach(tx => {
             const unstakedItems = tx.action?.arguments?.transfers?.filter(
                 transfer => transfer.collection === collectionTicker
             ) || [];
 
             unstakedItems.forEach(item => {
-                stakedNfts.delete(item.identifier);
+                stakedNfts.delete(item.identifier);  // Remove unstaked NFTs
             });
-        }
-    });
+        });
 
-    const stakedList = Array.from(stakedNfts.values());
-    console.log(`Total staked NFTs found: ${stakedList.length}`);
-    return stakedList;
+        const stakedList = Array.from(stakedNfts.values());
+        console.log(`Total staked NFTs found: ${stakedList.length}`);
+        return stakedList;
+
+    } catch (error) {
+        console.error("Error fetching staked NFTs data:", error);
+        throw error;
+    }
 };
+
 
 // Updated endpoint for staked NFTs snapshot draw
 app.post('/stakedNftsSnapshotDraw', checkToken, async (req, res) => {
