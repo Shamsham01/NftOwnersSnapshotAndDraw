@@ -230,36 +230,74 @@ app.post('/snapshotDraw', checkToken, async (req, res) => {
     }
 });
 
-// Helper function to fetch and filter staked NFTs from MultiversX API
-const fetchStakedNfts = async (accountAddress, collectionTicker) => {
-    try {
+// Helper function to fetch and calculate currently staked NFTs for /stakedNftsSnapshotDraw
+const fetchStakedNfts = async (collectionTicker, contractLabel) => {
+    const contractAddresses = {
+        oneDexStakedNfts: "erd1qqqqqqqqqqqqqpgqrq6gv0ljf4y9md42pe4m6mh96hcpqnpuusls97tf33",
+        // Add additional contracts here if needed
+    };
+
+    const contractAddress = contractAddresses[contractLabel];
+    if (!contractAddress) {
+        throw new Error("Unsupported contract label");
+    }
+
+    let transactions = [];
+    let page = 0;
+    let paginatedTransactions = [];
+
+    do {
+        // Fetch paginated transactions for relevant data
         const response = await fetch(
-            `${apiProvider.mainnet}/accounts/${accountAddress}/transactions?size=1000&status=success`
+            `${apiProvider.mainnet}/accounts/${contractAddress}/transfers?status=success&size=100&from=${page * 100}`
         );
 
-        if (!response.ok) throw new Error(`HTTP Error ${response.status}`);
+        if (!response.ok) {
+            throw new Error(`HTTP Error ${response.status}`);
+        }
 
-        const transactions = await response.json();
+        const data = await response.json();
 
-        // Filter transactions for the specific collection and functions (userStake, userUnstake)
-        const stakedNfts = transactions.filter(tx => {
-            const dataField = tx.data || '';
-            return (
-                dataField.includes(collectionTicker) &&
-                (dataField.includes("userStake") || dataField.includes("userUnstake"))
-            );
+        // Filter for userStake and ESDTNFTTransfer with SC as sender
+        paginatedTransactions = data.filter(tx => {
+            return (tx.function === 'userStake' || (tx.function === 'ESDTNFTTransfer' && tx.sender === contractAddress));
         });
 
-        return stakedNfts.map(tx => ({
-            owner: tx.sender,
-            identifier: tx.txHash,
-            function: tx.data.includes("userStake") ? "userStake" : "userUnstake",
-            // Additional fields if needed
-        }));
-    } catch (error) {
-        console.error(`Failed to fetch staked NFTs: ${error.message}`);
-        throw error;
-    }
+        transactions = transactions.concat(paginatedTransactions);
+        page += 1;
+    } while (paginatedTransactions.length === 100); // Continue if a full page was received
+
+    // Track currently staked NFTs
+    const stakedNfts = new Map();
+
+    transactions.forEach(tx => {
+        if (tx.function === 'userStake') {
+            // Extract staked NFT identifiers and owner (sender) from the transfers array
+            const stakedItems = tx.action?.arguments?.transfers?.filter(
+                transfer => transfer.collection === collectionTicker
+            ) || [];
+
+            stakedItems.forEach(item => {
+                stakedNfts.set(item.identifier, {
+                    owner: tx.sender,  // Owner for staked NFT
+                    identifier: item.identifier
+                });
+            });
+
+        } else if (tx.function === 'ESDTNFTTransfer' && tx.sender === contractAddress) {
+            // Unstake detected - remove NFTs being returned to owner (receiver)
+            const unstakedItems = tx.action?.arguments?.transfers?.filter(
+                transfer => transfer.collection === collectionTicker
+            ) || [];
+
+            unstakedItems.forEach(item => {
+                stakedNfts.delete(item.identifier);  // Remove unstaked NFT from the map
+            });
+        }
+    });
+
+    // Return currently staked NFTs as an array of values
+    return Array.from(stakedNfts.values());
 };
 
 // Updated endpoint for staked NFTs snapshot draw
