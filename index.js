@@ -303,10 +303,10 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
 // Updated endpoint for staked NFTs snapshot draw
 app.post('/stakedNftsSnapshotDraw', checkToken, async (req, res) => {
     try {
-        const { collectionTicker, contractLabel, numberOfWinners, accountAddress } = req.body;
+        const { collectionTicker, contractLabel, numberOfWinners } = req.body;
 
         // Fetch staked NFTs and their owners with filters
-        const stakedData = await fetchStakedNfts(accountAddress, collectionTicker);
+        const stakedData = await fetchStakedNfts(collectionTicker, contractLabel);
         if (stakedData.length === 0) {
             return res.status(404).json({ error: 'No staked NFTs found for this collection' });
         }
