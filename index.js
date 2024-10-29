@@ -244,11 +244,11 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
 
     let transactions = [];
     let page = 0;
-    let paginatedTransactions = [];
+    let pageSize = 100;
 
-    do {
+    while (true) {
         const response = await fetch(
-            `${apiProvider.mainnet}/accounts/${contractAddress}/transfers?status=success&size=100&from=${page * 100}`
+            `${apiProvider.mainnet}/accounts/${contractAddress}/transfers?status=success&size=${pageSize}&from=${page * pageSize}`
         );
 
         if (!response.ok) {
@@ -259,26 +259,29 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
         const data = await response.json();
         console.log(`Fetched ${data.length} transactions on page ${page}`);
 
-        paginatedTransactions = data.filter(tx => {
-            const isRelevant = tx.function === 'userStake' || (tx.function === 'ESDTNFTTransfer' && tx.sender === contractAddress);
-            return isRelevant;
-        });
+        // Stop if fewer transactions were returned than the page size, meaning no more pages
+        if (data.length < pageSize) {
+            transactions = transactions.concat(data);
+            break;
+        }
 
-        transactions = transactions.concat(paginatedTransactions);
+        // Accumulate transactions and increment page
+        transactions = transactions.concat(data);
         page += 1;
-    } while (paginatedTransactions.length === 100);
+    }
 
-    // Track staked NFTs by identifier, only keeping the last known state
+    // Reverse for processing in chronological order
+    transactions.reverse();
+
     const stakedNfts = new Map();
 
-    transactions.reverse().forEach(tx => {
+    transactions.forEach(tx => {
         if (tx.function === 'userStake') {
             const stakedItems = tx.action?.arguments?.transfers?.filter(
                 transfer => transfer.collection === collectionTicker
             ) || [];
 
             stakedItems.forEach(item => {
-                // Only add if it hasn’t been marked as unstaked previously
                 if (!stakedNfts.has(item.identifier)) {
                     stakedNfts.set(item.identifier, {
                         owner: tx.sender,
@@ -292,7 +295,6 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
             ) || [];
 
             unstakedItems.forEach(item => {
-                // Remove NFT from staked if it’s unstaked
                 stakedNfts.delete(item.identifier);
             });
         }
@@ -302,7 +304,6 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
     console.log(`Total staked NFTs found: ${stakedList.length}`);
     return stakedList;
 };
-
 
 // Updated endpoint for staked NFTs snapshot draw
 app.post('/stakedNftsSnapshotDraw', checkToken, async (req, res) => {
