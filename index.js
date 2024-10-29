@@ -244,19 +244,28 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
 
     let transactions = [];
     let page = 0;
-    const pageSize = 10000;
-    const maxPages = 100; // Set a maximum number of pages to prevent infinite loops
+    const pageSize = 1000; // Set to 1000 for stability
+    const maxPages = 100; // Limit to 100 pages as needed
+    const maxRetries = 3; // Maximum retries per page on failure
     const throttle = pThrottle({
-        limit: 1, // 1 request per second
+        limit: 1, // 1 request per second for safe pacing
         interval: 1000,
     });
 
-    const fetchPage = throttle(async (pageNum) => {
+    const fetchPage = throttle(async (pageNum, attempt = 1) => {
         const response = await fetch(
             `${apiProvider.mainnet}/accounts/${contractAddress}/transfers?status=success&size=${pageSize}&from=${pageNum * pageSize}`
         );
 
-        if (!response.ok) {
+        if (response.status === 429) {
+            if (attempt <= maxRetries) {
+                console.warn(`Rate limit hit, retrying page ${pageNum} (Attempt ${attempt} of ${maxRetries})`);
+                await new Promise(res => setTimeout(res, 2000 * attempt)); // Exponential backoff
+                return fetchPage(pageNum, attempt + 1);
+            } else {
+                throw new Error(`Rate limit exceeded after ${maxRetries} retries on page ${pageNum}`);
+            }
+        } else if (!response.ok) {
             console.error(`Failed to fetch data: HTTP Error ${response.status}`);
             throw new Error(`HTTP Error ${response.status}`);
         }
@@ -269,13 +278,12 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
             const data = await fetchPage(page);
             console.log(`Fetched ${data.length} transactions on page ${page}`);
 
-            // Stop if fewer results than page size, as no more pages are expected
             if (data.length === 0) break;
             transactions = transactions.concat(data);
 
             if (data.length < pageSize) {
-                console.log(`Final page reached with ${data.length} transactions.`);
-                break; // No more pages
+                console.log(`Reached the last page with ${data.length} transactions.`);
+                break;
             }
 
             page += 1;
@@ -285,7 +293,7 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
         }
     }
 
-    // Reverse transactions to process in chronological order
+    // Process transactions in chronological order
     transactions.reverse();
 
     const stakedNfts = new Map();
