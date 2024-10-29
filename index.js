@@ -230,6 +230,29 @@ app.post('/snapshotDraw', checkToken, async (req, res) => {
     }
 });
 
+// Helper function to fetch staked NFTs from MultiversX API
+const fetchStakedNfts = async (collectionTicker, contractLabel) => {
+    try {
+        const response = await fetch(
+            `${apiProvider.mainnet}/collections/${collectionTicker}/staked?contract=${contractLabel}`
+        );
+
+        if (!response.ok) throw new Error(`HTTP Error ${response.status}`);
+
+        const data = await response.json();
+
+        return data.map(nft => ({
+            owner: nft.owner,
+            identifier: nft.identifier,
+            metadataFileName: getMetadataFileName(nft.attributes),
+            attributes: nft.metadata?.attributes || []
+        }));
+    } catch (error) {
+        console.error(`Failed to fetch staked NFTs: ${error.message}`);
+        throw error;
+    }
+};
+
 // New endpoint for Staked NFTs Snapshot & Draw
 app.post('/stakedNftsSnapshotDraw', checkToken, async (req, res) => {
     try {
