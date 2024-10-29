@@ -244,11 +244,11 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
 
     let transactions = [];
     let page = 0;
-    const pageSize = 10000; // Set to maximum allowed size
-    const maxPages = 100; // Adjust as needed to limit total requests
+    const pageSize = 10000;
+    const maxPages = 100; // Set a maximum number of pages to prevent infinite loops
     const throttle = pThrottle({
-        limit: 1, // 1 request per second to stay within safe limits
-        interval: 1000, // per second
+        limit: 1, // 1 request per second
+        interval: 1000,
     });
 
     const fetchPage = throttle(async (pageNum) => {
@@ -269,20 +269,23 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
             const data = await fetchPage(page);
             console.log(`Fetched ${data.length} transactions on page ${page}`);
 
-            // Add to accumulated transactions
+            // Stop if fewer results than page size, as no more pages are expected
+            if (data.length === 0) break;
             transactions = transactions.concat(data);
 
-            // Stop if fewer results than the page size, meaning no more pages
-            if (data.length < pageSize) break;
+            if (data.length < pageSize) {
+                console.log(`Final page reached with ${data.length} transactions.`);
+                break; // No more pages
+            }
 
             page += 1;
         } catch (error) {
             console.error(`Error fetching data on page ${page}:`, error);
-            throw error; // Stop if an error occurs
+            throw error;
         }
     }
 
-    // Reverse for processing in chronological order
+    // Reverse transactions to process in chronological order
     transactions.reverse();
 
     const stakedNfts = new Map();
