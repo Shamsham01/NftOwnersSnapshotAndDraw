@@ -230,8 +230,6 @@ app.post('/snapshotDraw', checkToken, async (req, res) => {
     }
 });
 
-import pThrottle from 'p-throttle';
-
 // Throttle configuration: 5 requests per second
 const throttle = pThrottle({
     limit: 5,      // Maximum of 5 requests
