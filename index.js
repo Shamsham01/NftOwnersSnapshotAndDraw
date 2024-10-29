@@ -265,7 +265,7 @@ const fetchDataWithRetry = async (url, retries = 3) => {
 const fetchStakedNfts = async (collectionTicker, contractLabel) => {
     const contractAddresses = {
         oneDexStakedNfts: "erd1qqqqqqqqqqqqqpgqrq6gv0ljf4y9md42pe4m6mh96hcpqnpuusls97tf33",
-        // Add additional contracts here as needed
+        // Add additional contracts here if needed
     };
 
     const contractAddress = contractAddresses[contractLabel];
@@ -273,14 +273,31 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
         throw new Error("Unsupported contract label");
     }
 
+    // Helper function to fetch data with retry logic
+    const fetchData = async (url, retries = 3) => {
+        for (let attempt = 1; attempt <= retries; attempt++) {
+            try {
+                const response = await fetch(url);
+                if (!response.ok) {
+                    throw new Error(`HTTP Error ${response.status}`);
+                }
+                return await response.json();
+            } catch (error) {
+                console.error(`Error fetching data (attempt ${attempt}):`, error.message);
+                if (attempt === retries) throw error;
+                await new Promise(resolve => setTimeout(resolve, 2000 * attempt)); // Exponential backoff
+            }
+        }
+    };
+
     try {
-        // Fetch both staked and unstaked data with function filters using throttling and retries
-        const stakedData = await fetchDataWithRetry(
-            `${apiProvider.mainnet}/accounts/${contractAddress}/transfers?size=9999&token=${collectionTicker}&status=success&function=userStake`
+        // Fetch both staked and unstaked data with function filters, reduced batch size to 1000
+        const stakedData = await fetchData(
+            `${apiProvider.mainnet}/accounts/${contractAddress}/transfers?size=1000&token=${collectionTicker}&status=success&function=userStake`
         );
 
-        const unstakedData = await fetchDataWithRetry(
-            `${apiProvider.mainnet}/accounts/${contractAddress}/transfers?size=9999&token=${collectionTicker}&status=success&function=ESDTNFTTransfer`
+        const unstakedData = await fetchData(
+            `${apiProvider.mainnet}/accounts/${contractAddress}/transfers?size=1000&token=${collectionTicker}&status=success&function=ESDTNFTTransfer`
         );
 
         // Combine and sort all transactions by timestamp
@@ -317,6 +334,7 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
         throw error;
     }
 };
+
 
 // Updated endpoint for staked NFTs snapshot draw
 app.post('/stakedNftsSnapshotDraw', checkToken, async (req, res) => {
