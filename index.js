@@ -230,22 +230,31 @@ app.post('/snapshotDraw', checkToken, async (req, res) => {
     }
 });
 
-// Helper function to fetch staked NFTs from MultiversX API
-const fetchStakedNfts = async (collectionTicker, contractLabel) => {
+// Helper function to fetch and filter staked NFTs from MultiversX API
+const fetchStakedNfts = async (accountAddress, collectionTicker) => {
     try {
         const response = await fetch(
-            `${apiProvider.mainnet}/collections/${collectionTicker}/staked?contract=${contractLabel}`
+            `${apiProvider.mainnet}/accounts/${accountAddress}/transactions?size=1000&status=success`
         );
 
         if (!response.ok) throw new Error(`HTTP Error ${response.status}`);
 
-        const data = await response.json();
+        const transactions = await response.json();
 
-        return data.map(nft => ({
-            owner: nft.owner,
-            identifier: nft.identifier,
-            metadataFileName: getMetadataFileName(nft.attributes),
-            attributes: nft.metadata?.attributes || []
+        // Filter transactions for the specific collection and functions (userStake, userUnstake)
+        const stakedNfts = transactions.filter(tx => {
+            const dataField = tx.data || '';
+            return (
+                dataField.includes(collectionTicker) &&
+                (dataField.includes("userStake") || dataField.includes("userUnstake"))
+            );
+        });
+
+        return stakedNfts.map(tx => ({
+            owner: tx.sender,
+            identifier: tx.txHash,
+            function: tx.data.includes("userStake") ? "userStake" : "userUnstake",
+            // Additional fields if needed
         }));
     } catch (error) {
         console.error(`Failed to fetch staked NFTs: ${error.message}`);
@@ -253,13 +262,13 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
     }
 };
 
-// New endpoint for Staked NFTs Snapshot & Draw
+// Updated endpoint for staked NFTs snapshot draw
 app.post('/stakedNftsSnapshotDraw', checkToken, async (req, res) => {
     try {
-        const { collectionTicker, contractLabel, numberOfWinners } = req.body;
+        const { collectionTicker, contractLabel, numberOfWinners, accountAddress } = req.body;
 
-        // Fetch staked NFTs and their owners
-        const stakedData = await fetchStakedNfts(collectionTicker, contractLabel);
+        // Fetch staked NFTs and their owners with filters
+        const stakedData = await fetchStakedNfts(accountAddress, collectionTicker);
         if (stakedData.length === 0) {
             return res.status(404).json({ error: 'No staked NFTs found for this collection' });
         }
