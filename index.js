@@ -253,14 +253,18 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
         );
 
         if (!response.ok) {
+            console.error(`Failed to fetch data: HTTP Error ${response.status}`);
             throw new Error(`HTTP Error ${response.status}`);
         }
 
         const data = await response.json();
+        console.log(`Fetched ${data.length} transactions on page ${page}`);
 
         // Filter for userStake and ESDTNFTTransfer with SC as sender
         paginatedTransactions = data.filter(tx => {
-            return (tx.function === 'userStake' || (tx.function === 'ESDTNFTTransfer' && tx.sender === contractAddress));
+            const isRelevant = tx.function === 'userStake' || (tx.function === 'ESDTNFTTransfer' && tx.sender === contractAddress);
+            console.log(`Transaction ${tx.txHash}: ${isRelevant ? 'Relevant' : 'Irrelevant'} for staking/unstaking.`);
+            return isRelevant;
         });
 
         transactions = transactions.concat(paginatedTransactions);
@@ -272,32 +276,34 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
 
     transactions.forEach(tx => {
         if (tx.function === 'userStake') {
-            // Extract staked NFT identifiers and owner (sender) from the transfers array
             const stakedItems = tx.action?.arguments?.transfers?.filter(
                 transfer => transfer.collection === collectionTicker
             ) || [];
 
             stakedItems.forEach(item => {
                 stakedNfts.set(item.identifier, {
-                    owner: tx.sender,  // Owner for staked NFT
+                    owner: tx.sender,
                     identifier: item.identifier
                 });
+                console.log(`Staked: ${item.identifier} by ${tx.sender}`);
             });
 
         } else if (tx.function === 'ESDTNFTTransfer' && tx.sender === contractAddress) {
-            // Unstake detected - remove NFTs being returned to owner (receiver)
             const unstakedItems = tx.action?.arguments?.transfers?.filter(
                 transfer => transfer.collection === collectionTicker
             ) || [];
 
             unstakedItems.forEach(item => {
-                stakedNfts.delete(item.identifier);  // Remove unstaked NFT from the map
+                stakedNfts.delete(item.identifier);
+                console.log(`Unstaked: ${item.identifier} returned to ${tx.receiver}`);
             });
         }
     });
 
     // Return currently staked NFTs as an array of values
-    return Array.from(stakedNfts.values());
+    const stakedList = Array.from(stakedNfts.values());
+    console.log(`Total staked NFTs found: ${stakedList.length}`);
+    return stakedList;
 };
 
 // Updated endpoint for staked NFTs snapshot draw
