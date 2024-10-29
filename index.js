@@ -244,11 +244,16 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
 
     let transactions = [];
     let page = 0;
-    let pageSize = 100;
+    const pageSize = 10000; // Set to maximum allowed size
+    const maxPages = 100; // Adjust as needed to limit total requests
+    const throttle = pThrottle({
+        limit: 1, // 1 request per second to stay within safe limits
+        interval: 1000, // per second
+    });
 
-    while (true) {
+    const fetchPage = throttle(async (pageNum) => {
         const response = await fetch(
-            `${apiProvider.mainnet}/accounts/${contractAddress}/transfers?status=success&size=${pageSize}&from=${page * pageSize}`
+            `${apiProvider.mainnet}/accounts/${contractAddress}/transfers?status=success&size=${pageSize}&from=${pageNum * pageSize}`
         );
 
         if (!response.ok) {
@@ -256,18 +261,25 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
             throw new Error(`HTTP Error ${response.status}`);
         }
 
-        const data = await response.json();
-        console.log(`Fetched ${data.length} transactions on page ${page}`);
+        return await response.json();
+    });
 
-        // Stop if fewer transactions were returned than the page size, meaning no more pages
-        if (data.length < pageSize) {
+    while (page < maxPages) {
+        try {
+            const data = await fetchPage(page);
+            console.log(`Fetched ${data.length} transactions on page ${page}`);
+
+            // Add to accumulated transactions
             transactions = transactions.concat(data);
-            break;
-        }
 
-        // Accumulate transactions and increment page
-        transactions = transactions.concat(data);
-        page += 1;
+            // Stop if fewer results than the page size, meaning no more pages
+            if (data.length < pageSize) break;
+
+            page += 1;
+        } catch (error) {
+            console.error(`Error fetching data on page ${page}:`, error);
+            throw error; // Stop if an error occurs
+        }
     }
 
     // Reverse for processing in chronological order
