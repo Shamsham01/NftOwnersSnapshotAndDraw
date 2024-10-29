@@ -230,11 +230,44 @@ app.post('/snapshotDraw', checkToken, async (req, res) => {
     }
 });
 
+import pThrottle from 'p-throttle';
+
+// Throttle configuration: 5 requests per second
+const throttle = pThrottle({
+    limit: 5,      // Maximum of 5 requests
+    interval: 1000 // Per 1000 ms (1 second)
+});
+
+// Helper function to fetch data with throttling and retry logic
+const fetchDataWithRetry = async (url, retries = 3) => {
+    const fetchThrottled = throttle(async (url) => {
+        const response = await fetch(url);
+        if (!response.ok) {
+            throw new Error(`HTTP Error ${response.status}`);
+        }
+        return await response.json();
+    });
+
+    for (let attempt = 0; attempt <= retries; attempt++) {
+        try {
+            return await fetchThrottled(url);
+        } catch (error) {
+            if (attempt < retries && error.message.includes("HTTP Error 429")) {
+                console.warn(`Retrying due to rate limit... (Attempt ${attempt + 1} of ${retries})`);
+                await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second before retrying
+            } else {
+                throw error;
+            }
+        }
+    }
+    throw new Error("Failed to fetch data after retries.");
+};
+
 // Helper function to fetch and calculate currently staked NFTs for /stakedNftsSnapshotDraw
 const fetchStakedNfts = async (collectionTicker, contractLabel) => {
     const contractAddresses = {
         oneDexStakedNfts: "erd1qqqqqqqqqqqqqpgqrq6gv0ljf4y9md42pe4m6mh96hcpqnpuusls97tf33",
-        // Add additional contracts here if needed
+        // Add additional contracts here as needed
     };
 
     const contractAddress = contractAddresses[contractLabel];
@@ -242,21 +275,13 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
         throw new Error("Unsupported contract label");
     }
 
-    const fetchData = async (url) => {
-        const response = await fetch(url);
-        if (!response.ok) {
-            throw new Error(`HTTP Error ${response.status}`);
-        }
-        return await response.json();
-    };
-
     try {
-        // Fetch both staked and unstaked data with function filters
-        const stakedData = await fetchData(
+        // Fetch both staked and unstaked data with function filters using throttling and retries
+        const stakedData = await fetchDataWithRetry(
             `${apiProvider.mainnet}/accounts/${contractAddress}/transfers?size=9999&token=${collectionTicker}&status=success&function=userStake`
         );
 
-        const unstakedData = await fetchData(
+        const unstakedData = await fetchDataWithRetry(
             `${apiProvider.mainnet}/accounts/${contractAddress}/transfers?size=9999&token=${collectionTicker}&status=success&function=ESDTNFTTransfer`
         );
 
@@ -306,6 +331,9 @@ app.post('/stakedNftsSnapshotDraw', checkToken, async (req, res) => {
             return res.status(404).json({ error: 'No staked NFTs found for this collection' });
         }
 
+        // Count total staked NFTs
+        const totalStakedCount = stakedData.length;
+
         // Random selection of winners
         const shuffled = stakedData.sort(() => 0.5 - Math.random());
         const winners = shuffled.slice(0, numberOfWinners);
@@ -313,9 +341,10 @@ app.post('/stakedNftsSnapshotDraw', checkToken, async (req, res) => {
         // Generate CSV with all staked NFTs
         const csvString = await generateCsv(stakedData);
 
-        // Response includes selected winners and CSV snapshot
+        // Response includes selected winners, total staked count, and CSV snapshot
         res.json({
             winners,
+            totalStakedCount,  // Adding total number of staked NFTs to response
             message: `${numberOfWinners} winners have been selected from staked NFTs in collection ${collectionTicker}.`,
             csvString, // All staked NFTs data as CSV
         });
