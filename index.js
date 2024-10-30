@@ -269,9 +269,18 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
         // Add additional contracts here if needed
     };
 
+    // Define the staking function names for each contract
+    const stakingFunctions = {
+        oneDexStakedNfts: "userStake",
+        xoxnoStakedNfts: "stake",
+        // Add other contract function mappings as needed
+    };
+
     const contractAddress = contractAddresses[contractLabel];
-    if (!contractAddress) {
-        throw new Error("Unsupported contract label");
+    const stakeFunction = stakingFunctions[contractLabel];
+
+    if (!contractAddress || !stakeFunction) {
+        throw new Error("Unsupported contract label or staking function");
     }
 
     // Helper function to fetch data with retry logic
@@ -292,9 +301,9 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
     };
 
     try {
-        // Fetch both staked and unstaked data with function filters, reduced batch size to 1000
+        // Fetch both staked and unstaked data using the correct function name for staking
         const stakedData = await fetchData(
-            `${apiProvider.mainnet}/accounts/${contractAddress}/transfers?size=1000&token=${collectionTicker}&status=success&function=userStake`
+            `${apiProvider.mainnet}/accounts/${contractAddress}/transfers?size=1000&token=${collectionTicker}&status=success&function=${stakeFunction}`
         );
 
         const unstakedData = await fetchData(
@@ -313,7 +322,7 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
             ) || [];
 
             transfers.forEach(item => {
-                if (tx.function === 'userStake') {
+                if (tx.function === stakeFunction) {
                     // Stake transaction: mark NFT as staked by setting owner
                     stakedNfts.set(item.identifier, {
                         owner: tx.sender,
