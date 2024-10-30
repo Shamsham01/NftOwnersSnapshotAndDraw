@@ -266,6 +266,7 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
     const contractAddresses = {
         oneDexStakedNfts: "erd1qqqqqqqqqqqqqpgqrq6gv0ljf4y9md42pe4m6mh96hcpqnpuusls97tf33",
         xoxnoStakedNfts: "erd1qqqqqqqqqqqqqpgqvpkd3g3uwludduv3797j54qt6c888wa59w2shntt6z",
+        artCpaStakedNfts: "erd1qqqqqqqqqqqqqpgqfken0exk7jpr85dx6f8ym3jgcagesfcqkqys0xnquf",
         // Add additional contracts here if needed
     };
 
@@ -273,6 +274,7 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
     const stakingFunctions = {
         oneDexStakedNfts: "userStake",
         xoxnoStakedNfts: "stake",
+        artCpaStakedNfts: "userStake",
         // Add other contract function mappings as needed
     };
 
