@@ -170,6 +170,18 @@ const generateCsv = async (data) => {
     });
 };
 
+// Function to generate unique owner stats
+const generateUniqueOwnerStats = (data) => {
+    const stats = {};
+    data.forEach(({ owner }) => {
+        if (!stats[owner]) {
+            stats[owner] = 0;
+        }
+        stats[owner]++;
+    });
+    return Object.entries(stats).map(([owner, count]) => ({ owner, tokensCount: count }));
+};
+
 // Route for snapshotDraw
 app.post('/snapshotDraw', checkToken, async (req, res) => {
     try {
@@ -215,12 +227,16 @@ app.post('/snapshotDraw', checkToken, async (req, res) => {
             });
         });
 
+        // Generate unique owner stats
+        const uniqueOwnerStats = generateUniqueOwnerStats(addresses);
+
         // Generate CSV as a string with all NFTs in the snapshot (not just winners)
         const csvString = await generateCsv(addresses);
 
-        // Respond with the full NFT snapshot in CSV string and the winners
+        // Respond with the full NFT snapshot, winners, and unique stats
         res.json({
             winners,
+            uniqueOwnerStats, // Include unique owner stats here
             message: `${numberOfWinners} winners have been selected from collection ${collectionTicker}.`,
             csvString, // Returning the CSV string of all NFTs considered in the draw
         });
