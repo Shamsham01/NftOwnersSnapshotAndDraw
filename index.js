@@ -131,10 +131,11 @@ allTransactions.forEach((tx) => {
     });
 });
 
+// Final validation for duplicates
+const uniqueStakedCount = new Set(stakedNfts.keys()).size;
+console.log(`Final unique staked NFTs count: ${uniqueStakedCount}`);
 
-        const uniqueStakedCount = new Set(stakedNfts.keys()).size;
-        console.log(`Final unique staked NFTs count: ${uniqueStakedCount}`);
-        return Array.from(stakedNfts.values());
+return Array.from(stakedNfts.values());
 
     } catch (error) {
         console.error("Error fetching staked NFTs data:", error.message);
