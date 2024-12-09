@@ -91,70 +91,46 @@ const fetchData = async (url, retries = RETRY_LIMIT) => {
 };
 
 // Helper function to fetch and calculate currently staked NFTs
-const fetchStakedNfts = async (collectionTicker, contractLabel) => {
-    const { address, functionName } = getContractConfig(contractLabel);
+allTransactions.forEach((tx) => {
+    const transfers =
+        tx.action?.arguments?.transfers?.filter(
+            (transfer) => transfer.collection === collectionTicker
+        ) || [];
 
-    try {
-        const fetchPaginatedData = async (baseUrl) => {
-            let allData = [];
-            let page = 0;
-            let data;
+    transfers.forEach((item) => {
+        if (tx.function === functionName) {
+            // Stake transaction: Add to stakedNfts
+            if (stakedNfts.has(item.identifier)) {
+                console.warn(
+                    `Duplicate stake detected for NFT: ${item.identifier}`
+                );
+            } else {
+                stakedNfts.set(item.identifier, {
+                    owner: tx.sender,
+                    identifier: item.identifier,
+                });
+                console.log(`Staked: ${item.identifier} by ${tx.sender}`);
+            }
+        } else if (
+            tx.function === "ESDTNFTTransfer" &&
+            tx.sender === address
+        ) {
+            // Unstake transaction: Remove from stakedNfts
+            if (!stakedNfts.has(item.identifier)) {
+                console.warn(
+                    `Unstake event for non-staked NFT: ${item.identifier}`
+                );
+            } else {
+                const unstakeReceiver = tx.receiver || "Unknown Receiver";
+                stakedNfts.delete(item.identifier);
+                console.log(
+                    `Unstaked: ${item.identifier}, Receiver: ${unstakeReceiver}`
+                );
+            }
+        }
+    });
+});
 
-            do {
-                const url = `${baseUrl}&from=${page * MAX_SIZE}`;
-                data = await fetchData(url);
-                allData = allData.concat(data);
-                page++;
-            } while (data.length === MAX_SIZE);
-
-            return allData;
-        };
-
-        const stakedData = await fetchPaginatedData(
-            `${apiProvider.mainnet}/accounts/${address}/transfers?size=1000&token=${collectionTicker}&status=success&function=${functionName}`
-        );
-
-        const unstakedData = await fetchPaginatedData(
-            `${apiProvider.mainnet}/accounts/${address}/transfers?size=1000&token=${collectionTicker}&status=success&function=ESDTNFTTransfer`
-        );
-
-        const allTransactions = [...stakedData, ...unstakedData].sort(
-            (a, b) => a.timestamp - b.timestamp || a.nonce - b.nonce
-        );
-
-        const stakedNfts = new Map();
-
-        console.log('All transactions:', allTransactions);
-
-        allTransactions.forEach(tx => {
-            const transfers = tx.action?.arguments?.transfers?.filter(
-                transfer => transfer.collection === collectionTicker
-            ) || [];
-
-            transfers.forEach(item => {
-                if (tx.function === functionName) {
-                    // Stake transaction: Add to stakedNfts
-                    if (stakedNfts.has(item.identifier)) {
-                        console.warn(`Duplicate stake detected for NFT: ${item.identifier}`);
-                    } else {
-                        stakedNfts.set(item.identifier, {
-                            owner: tx.sender,
-                            identifier: item.identifier,
-                        });
-                        console.log(`Staked: ${item.identifier} by ${tx.sender}`);
-                    }
-                } else if (tx.function === 'ESDTNFTTransfer' && tx.sender === address) {
-                    // Unstake transaction: Remove from stakedNfts
-                    if (!stakedNfts.has(item.identifier)) {
-                        console.warn(`Unstake event for non-staked NFT: ${item.identifier}`);
-                    } else {
-                        const unstakeReceiver = tx.receiver || 'Unknown Receiver';
-                        stakedNfts.delete(item.identifier);
-                        console.log(`Unstaked: ${item.identifier}, Receiver: ${unstakeReceiver}`);
-                    }
-                }
-            });
-        });
 
         const uniqueStakedCount = new Set(stakedNfts.keys()).size;
         console.log(`Final unique staked NFTs count: ${uniqueStakedCount}`);
