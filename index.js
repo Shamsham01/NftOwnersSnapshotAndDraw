@@ -94,22 +94,41 @@ const fetchData = async (url, retries = RETRY_LIMIT) => {
 const fetchStakedNfts = async (collectionTicker, contractLabel) => {
     const { address, functionName } = getContractConfig(contractLabel);
 
+    // Helper function to fetch all paginated data
+    const fetchPaginatedData = async (baseUrl) => {
+        let allData = [];
+        let page = 0;
+        let data;
+
+        do {
+            const url = `${baseUrl}&from=${page * MAX_SIZE}`;
+            data = await fetchData(url);
+            allData = allData.concat(data);
+            page++;
+        } while (data.length === MAX_SIZE);
+
+        return allData;
+    };
+
     try {
-        // Fetch staked and unstaked data using the correct function name for staking
-        const stakedData = await fetchData(
+        // Fetch staked and unstaked data using pagination
+        const stakedData = await fetchPaginatedData(
             `${apiProvider.mainnet}/accounts/${address}/transfers?size=1000&token=${collectionTicker}&status=success&function=${functionName}`
         );
 
-        const unstakedData = await fetchData(
+        const unstakedData = await fetchPaginatedData(
             `${apiProvider.mainnet}/accounts/${address}/transfers?size=1000&token=${collectionTicker}&status=success&function=ESDTNFTTransfer`
         );
 
-        // Combine and sort all transactions by timestamp and nonce for precise order
+        // Combine and sort all transactions by timestamp and nonce
         const allTransactions = [...stakedData, ...unstakedData].sort(
             (a, b) => a.timestamp - b.timestamp || a.nonce - b.nonce
         );
 
         const stakedNfts = new Map();
+
+        // Debug logging: Show raw transaction data
+        console.log('All transactions fetched:', allTransactions);
 
         // Process transactions in chronological order
         allTransactions.forEach(tx => {
@@ -119,27 +138,30 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
 
             transfers.forEach(item => {
                 if (tx.function === functionName) {
-                    // Stake transaction: mark NFT as staked by setting owner
+                    // Stake transaction: Add NFT to the staked list
                     stakedNfts.set(item.identifier, {
                         owner: tx.sender,
                         identifier: item.identifier,
                     });
+                    console.log(`Staked: ${item.identifier} by ${tx.sender}`);
                 } else if (tx.function === 'ESDTNFTTransfer' && tx.sender === address) {
-                    // Unstake transaction: remove NFT from staked list
+                    // Unstake transaction: Remove NFT from the staked list
                     stakedNfts.delete(item.identifier);
+                    console.log(`Unstaked: ${item.identifier}`);
                 }
             });
         });
 
-        const stakedList = Array.from(stakedNfts.values());
-        console.log(`Total staked NFTs found: ${stakedList.length}`);
-        return stakedList;
+        // Debug logging: Final state of staked NFTs
+        console.log(`Final staked NFTs: ${Array.from(stakedNfts.keys())}`);
+        return Array.from(stakedNfts.values());
 
     } catch (error) {
         console.error("Error fetching staked NFTs data:", error.message);
         throw error;
     }
 };
+
 
 // Function to generate CSV data as a string (includes all NFTs in the snapshot)
 const generateCsv = async (data) => {
