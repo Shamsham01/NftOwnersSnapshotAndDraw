@@ -12,5 +12,17 @@ services:
         value: "mainnet"
       - key: SECURE_TOKEN
         sync: false
+      - key: ONEDEX_STAKE_ADDRESS
+        value: "erd1qqqqqqqqqqqqqpgqrq6gv0ljf4y9md42pe4m6mh96hcpqnpuusls97tf33"
+      - key: ONEDEX_STAKE_FUNCTION
+        value: "userStake"
+      - key: XOXNO_STAKE_ADDRESS
+        value: "erd1qqqqqqqqqqqqqpgqvpkd3g3uwludduv3797j54qt6c888wa59w2shntt6z"
+      - key: XOXNO_STAKE_FUNCTION
+        value: "stake"
+      - key: ARTCPA_STAKE_ADDRESS
+        value: "erd1qqqqqqqqqqqqqpgqfken0exk7jpr85dx6f8ym3jgcagesfcqkqys0xnquf"
+      - key: ARTCPA_STAKE_FUNCTION
+        value: "userStake"
     autoDeploy: true
     region: frankfurt
