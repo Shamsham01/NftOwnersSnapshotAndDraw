@@ -31,7 +31,7 @@ const checkToken = (req, res, next) => {
     }
 };
 
-// New Authorization Endpoint for Make.com to verify connection
+// Authorization endpoint to verify connection
 app.post('/authorization', (req, res) => {
     try {
         const token = req.headers.authorization;
@@ -127,35 +127,34 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
         console.log('All transactions:', allTransactions);
 
         allTransactions.forEach(tx => {
-    const transfers = tx.action?.arguments?.transfers?.filter(
-        transfer => transfer.collection === collectionTicker
-    ) || [];
+            const transfers = tx.action?.arguments?.transfers?.filter(
+                transfer => transfer.collection === collectionTicker
+            ) || [];
 
-    transfers.forEach(item => {
-        if (tx.function === functionName) {
-            // Stake transaction: Add to stakedNfts
-            if (stakedNfts.has(item.identifier)) {
-                console.warn(`Duplicate stake detected for NFT: ${item.identifier}`);
-            } else {
-                stakedNfts.set(item.identifier, {
-                    owner: tx.sender,
-                    identifier: item.identifier,
-                });
-                console.log(`Staked: ${item.identifier} by ${tx.sender}`);
-            }
-        } else if (tx.function === 'ESDTNFTTransfer' && tx.sender === address) {
-            // Unstake transaction: Remove from stakedNfts
-            if (!stakedNfts.has(item.identifier)) {
-                console.warn(`Unstake event for non-staked NFT: ${item.identifier}`);
-            } else {
-                const unstakeReceiver = tx.receiver || 'Unknown Receiver';
-                stakedNfts.delete(item.identifier);
-                console.log(`Unstaked: ${item.identifier}, Receiver: ${unstakeReceiver}`);
-            }
-        }
-    });
-});
-
+            transfers.forEach(item => {
+                if (tx.function === functionName) {
+                    // Stake transaction: Add to stakedNfts
+                    if (stakedNfts.has(item.identifier)) {
+                        console.warn(`Duplicate stake detected for NFT: ${item.identifier}`);
+                    } else {
+                        stakedNfts.set(item.identifier, {
+                            owner: tx.sender,
+                            identifier: item.identifier,
+                        });
+                        console.log(`Staked: ${item.identifier} by ${tx.sender}`);
+                    }
+                } else if (tx.function === 'ESDTNFTTransfer' && tx.sender === address) {
+                    // Unstake transaction: Remove from stakedNfts
+                    if (!stakedNfts.has(item.identifier)) {
+                        console.warn(`Unstake event for non-staked NFT: ${item.identifier}`);
+                    } else {
+                        const unstakeReceiver = tx.receiver || 'Unknown Receiver';
+                        stakedNfts.delete(item.identifier);
+                        console.log(`Unstaked: ${item.identifier}, Receiver: ${unstakeReceiver}`);
+                    }
+                }
+            });
+        });
 
         const uniqueStakedCount = new Set(stakedNfts.keys()).size;
         console.log(`Final unique staked NFTs count: ${uniqueStakedCount}`);
@@ -166,7 +165,6 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
         throw error;
     }
 };
-
 
 // Function to generate CSV data as a string (includes all NFTs in the snapshot)
 const generateCsv = async (data) => {
