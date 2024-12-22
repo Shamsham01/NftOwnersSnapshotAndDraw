@@ -501,10 +501,9 @@ const fetchEsdtOwners = async (token, includeSmartContracts) => {
     const owners = [];
     const size = 1000; // API allows fetching up to 1000 owners per call
     let from = 0;
-    let hasMore = true;
 
     try {
-        while (hasMore) {
+        while (true) {
             const response = await fetch(
                 `${apiProvider.mainnet}/tokens/${token}/accounts?size=${size}&from=${from}`
             );
@@ -515,20 +514,25 @@ const fetchEsdtOwners = async (token, includeSmartContracts) => {
             }
 
             const data = await response.json();
-            if (data.length === 0) {
-                hasMore = false; // No more owners to fetch
-            } else {
-                // Filter out smart contracts if specified
-                const filteredOwners = data.filter(owner =>
-                    includeSmartContracts || !isSmartContractAddress(owner.address)
-                );
 
-                // Add owners to the result array
-                owners.push(...filteredOwners);
+            // Exit if no more data
+            if (data.length === 0) break;
 
-                // Move to the next page
-                from += size;
-                hasMore = data.length === size; // If less than 1000, we reached the end
+            // Filter out smart contracts if specified
+            const filteredOwners = data.filter(owner =>
+                includeSmartContracts || !isSmartContractAddress(owner.address)
+            );
+
+            // Add owners to the result array
+            owners.push(...filteredOwners);
+
+            // Increment `from` by the batch size
+            from += size;
+
+            // Reset `from` and fetch the next batch if we reach the API limit
+            if (from + size > 10000) {
+                console.warn(`Result window exceeded 10,000. Adjusting batch parameters.`);
+                from = 0; // Reset `from` for the next iteration
             }
         }
 
@@ -538,6 +542,7 @@ const fetchEsdtOwners = async (token, includeSmartContracts) => {
         throw error;
     }
 };
+
 
 // Helper function to fetch token details
 const fetchTokenDetails = async (token) => {
