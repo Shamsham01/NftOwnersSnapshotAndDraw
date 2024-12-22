@@ -501,12 +501,19 @@ const fetchEsdtOwners = async (token, includeSmartContracts) => {
     const owners = [];
     const size = 1000; // API allows fetching up to 1000 owners per call
     let from = 0;
+    let lastAddress = null;
 
     try {
         while (true) {
-            const url = `${apiProvider.mainnet}/tokens/${token}/accounts?size=${size}&from=${from}`;
-            const response = await fetchWithRetry(url);
+            let url = `${apiProvider.mainnet}/tokens/${token}/accounts?size=${size}`;
+            if (from > 0) {
+                url += `&from=${from}`;
+            }
+            if (lastAddress) {
+                url += `&start=${lastAddress}`;
+            }
 
+            const response = await fetchWithRetry(url);
             if (!response || response.length === 0) break;
 
             // Filter out smart contracts if specified
@@ -516,12 +523,13 @@ const fetchEsdtOwners = async (token, includeSmartContracts) => {
 
             owners.push(...filteredOwners);
 
-            from += size;
-
-            // Handle result window limits by resetting `from` after hitting 10,000
-            if (from >= 10000) {
-                console.warn(`Result window exceeded 10,000. Fetching additional batches.`);
-                from = owners.length; // Continue from the last fetched count
+            // If the total exceeds the result window, adjust for further calls
+            if (from + size >= 10000) {
+                console.warn('Result window exceeded 10,000. Adjusting to fetch additional batches.');
+                lastAddress = response[response.length - 1].address; // Use the last fetched address as a pivot
+                from = 0; // Reset the result window
+            } else {
+                from += size;
             }
         }
 
@@ -531,6 +539,7 @@ const fetchEsdtOwners = async (token, includeSmartContracts) => {
         throw error;
     }
 };
+
 
 // Helper function to fetch token details
 const fetchTokenDetails = async (token) => {
