@@ -507,8 +507,8 @@ app.post('/esdtSnapshotDraw', checkToken, async (req, res) => {
 
         // Fetch token details (including decimals)
         const tokenDetails = await fetchTokenDetails(token);
-        if (!tokenDetails || !tokenDetails.decimals) {
-            return res.status(404).json({ error: `Failed to fetch token details for "${token}"` });
+        if (!tokenDetails || tokenDetails.decimals === undefined) {
+            return res.status(404).json({ error: `Failed to fetch token details for "${token}".` });
         }
 
         const decimals = tokenDetails.decimals;
@@ -516,7 +516,7 @@ app.post('/esdtSnapshotDraw', checkToken, async (req, res) => {
         // Fetch all ESDT owners
         const esdtOwners = await fetchEsdtOwners(token, includeSmartContracts);
         if (esdtOwners.length === 0) {
-            return res.status(404).json({ error: `No owners found for token "${token}"` });
+            return res.status(404).json({ error: `No owners found for token "${token}".` });
         }
 
         // Convert balances to human-readable format using decimals
