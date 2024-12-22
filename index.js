@@ -398,6 +398,106 @@ app.post('/stakedNftsSnapshotDraw', checkToken, async (req, res) => {
     }
 });
 
+// New endpoint for SFT snapshot draw
+app.post('/sftSnapshotDraw', checkToken, async (req, res) => {
+    try {
+        const { collectionTicker, numberOfWinners, includeSmartContracts } = req.body;
+
+        if (!collectionTicker || !numberOfWinners) {
+            return res.status(400).json({ error: 'Missing required parameters: collectionTicker, numberOfWinners' });
+        }
+
+        // Fetch SFT owners
+        const sftOwners = await fetchSftOwners(collectionTicker, includeSmartContracts);
+        if (sftOwners.length === 0) {
+            return res.status(404).json({ error: 'No SFT owners found for the specified collection' });
+        }
+
+        // Randomly select winners
+        const shuffled = sftOwners.sort(() => 0.5 - Math.random());
+        const winners = shuffled.slice(0, numberOfWinners);
+
+        // Generate CSV for all SFT owners
+        const csvString = await generateCsv(sftOwners.map(owner => ({
+            address: owner.address,
+            balance: owner.balance,
+        })));
+
+        // Response payload
+        res.json({
+            winners,
+            totalOwners: sftOwners.length,
+            message: `${numberOfWinners} winners have been selected from the SFT collection "${collectionTicker}".`,
+            csvString,
+        });
+    } catch (error) {
+        console.error('Error during sftSnapshotDraw:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Helper function to fetch SFT owners
+const fetchSftOwners = async (collectionTicker, includeSmartContracts) => {
+    const owners = [];
+    try {
+        // Fetch owners from the MultiversX API
+        const response = await fetch(`${apiProvider.mainnet}/collections/${collectionTicker}/owners`);
+        if (!response.ok) {
+            throw new Error(`Failed to fetch owners for collection "${collectionTicker}".`);
+        }
+
+        const data = await response.json();
+
+        // Filter out smart contracts if specified
+        const filteredOwners = data.filter(owner => 
+            includeSmartContracts || !isSmartContractAddress(owner.address)
+        );
+
+        // Map the data to the desired format
+        filteredOwners.forEach(owner => {
+            owners.push({
+                address: owner.address,
+                balance: owner.balance, // Balance of the SFT held by the owner
+            });
+        });
+
+        return owners;
+    } catch (error) {
+        console.error('Error fetching SFT owners:', error);
+        throw error;
+    }
+};
+
+// Helper function to generate CSV
+const generateCsv = async (data) => {
+    const csvData = [];
+
+    data.forEach(row => {
+        csvData.push({
+            address: row.address,
+            balance: row.balance, // Include SFT balance in the CSV
+        });
+    });
+
+    return new Promise((resolve, reject) => {
+        const csvStream = formatCsv({ headers: true });
+        const chunks = [];
+
+        csvStream.on('data', chunk => chunks.push(chunk.toString()));
+        csvStream.on('end', () => resolve(chunks.join('')));
+        csvStream.on('error', reject);
+
+        csvData.forEach(row => csvStream.write(row));
+        csvStream.end();
+    });
+};
+
+// Middleware to check for smart contract addresses
+const isSmartContractAddress = (address) => {
+    return address.startsWith('erd1qqqqqqqqqqqqq');
+};
+
+
 // Start the server
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
