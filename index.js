@@ -496,7 +496,72 @@ const fetchSftOwners = async (collectionTicker, editions, includeSmartContracts)
     }
 };
 
-// Helper function to fetch ESDT owners
+// Endpoint for ESDT snapshot draw
+app.post('/esdtSnapshotDraw', checkToken, async (req, res) => {
+    try {
+        const { token, numberOfWinners, includeSmartContracts } = req.body;
+
+        if (!token || !numberOfWinners) {
+            return res.status(400).json({ error: 'Missing required parameters: token, numberOfWinners' });
+        }
+
+        // Fetch token details (including decimals)
+        const tokenDetails = await fetchTokenDetails(token);
+        if (!tokenDetails || !tokenDetails.decimals) {
+            return res.status(404).json({ error: `Failed to fetch token details for "${token}"` });
+        }
+
+        const decimals = tokenDetails.decimals;
+
+        // Fetch all ESDT owners
+        const esdtOwners = await fetchEsdtOwners(token, includeSmartContracts);
+        if (esdtOwners.length === 0) {
+            return res.status(404).json({ error: `No owners found for token "${token}"` });
+        }
+
+        // Convert balances to human-readable format using decimals
+        esdtOwners.forEach(owner => {
+            owner.humanReadableBalance = (BigInt(owner.balance) / BigInt(10 ** decimals)).toString();
+        });
+
+        // Randomly select winners
+        const shuffled = esdtOwners.sort(() => 0.5 - Math.random());
+        const winners = shuffled.slice(0, numberOfWinners);
+
+        // Generate CSV for all ESDT owners
+        const csvString = await generateCsv(esdtOwners.map(owner => ({
+            address: owner.address,
+            balance: owner.humanReadableBalance,
+        })));
+
+        // Respond with the results
+        res.json({
+            winners,
+            totalOwners: esdtOwners.length,
+            message: `${numberOfWinners} winners have been selected from the ESDT token "${token}".`,
+            csvString,
+        });
+    } catch (error) {
+        console.error('Error during esdtSnapshotDraw:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Helper function to fetch token details
+const fetchTokenDetails = async (token) => {
+    try {
+        const response = await fetch(`${apiProvider.mainnet}/tokens/${token}`);
+        if (!response.ok) {
+            throw new Error(`Failed to fetch token details for "${token}".`);
+        }
+        return await response.json();
+    } catch (error) {
+        console.error('Error fetching token details:', error.message);
+        throw error;
+    }
+};
+
+// Helper function to fetch ESDT owners with throttling and retry logic
 const fetchEsdtOwners = async (token, includeSmartContracts) => {
     const owners = [];
     const size = 1000; // API allows fetching up to 1000 owners per call
@@ -504,35 +569,23 @@ const fetchEsdtOwners = async (token, includeSmartContracts) => {
 
     try {
         while (true) {
-            const response = await fetch(
-                `${apiProvider.mainnet}/tokens/${token}/accounts?size=${size}&from=${from}`
-            );
+            const url = `${apiProvider.mainnet}/tokens/${token}/accounts?size=${size}&from=${from}`;
+            const data = await fetchWithRetry(url);
 
-            if (!response.ok) {
-                console.error('API response:', response.status, await response.text());
-                throw new Error(`Failed to fetch owners for token "${token}".`);
-            }
-
-            const data = await response.json();
-
-            // Exit if no more data
             if (data.length === 0) break;
 
-            // Filter out smart contracts if specified
             const filteredOwners = data.filter(owner =>
                 includeSmartContracts || !isSmartContractAddress(owner.address)
             );
 
-            // Add owners to the result array
             owners.push(...filteredOwners);
 
-            // Increment `from` by the batch size
             from += size;
 
-            // Reset `from` and fetch the next batch if we reach the API limit
+            // Prevent exceeding the result window limit
             if (from + size > 10000) {
-                console.warn(`Result window exceeded 10,000. Adjusting batch parameters.`);
-                from = 0; // Reset `from` for the next iteration
+                console.warn('Result window exceeded 10,000. Adjusting batch parameters.');
+                break;
             }
         }
 
@@ -543,69 +596,26 @@ const fetchEsdtOwners = async (token, includeSmartContracts) => {
     }
 };
 
-
-// Helper function to fetch token details
-const fetchTokenDetails = async (token) => {
-    try {
-        const response = await fetch(`${apiProvider.mainnet}/tokens/${token}`);
-        if (!response.ok) {
-            console.error('API response:', response.status, await response.text());
-            throw new Error(`Failed to fetch details for token "${token}".`);
+// Helper function for fetch with retry logic and exponential backoff
+const fetchWithRetry = async (url, retries = 5) => {
+    for (let attempt = 1; attempt <= retries; attempt++) {
+        try {
+            const response = await fetch(url);
+            if (!response.ok) {
+                throw new Error(`HTTP Error ${response.status}`);
+            }
+            return await response.json();
+        } catch (error) {
+            if (attempt < retries && error.message.includes("HTTP Error 429")) {
+                console.warn(`Retrying request due to rate limit... (Attempt ${attempt})`);
+                await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, attempt))); // Exponential backoff
+            } else {
+                throw error;
+            }
         }
-        return await response.json();
-    } catch (error) {
-        console.error('Error fetching token details:', error.message);
-        throw error;
     }
+    throw new Error("Failed to fetch data after retries.");
 };
-
-// Endpoint for ESDT Snapshot Draw
-app.post('/esdtSnapshotDraw', checkToken, async (req, res) => {
-    try {
-        const { token, includeSmartContracts, numberOfWinners } = req.body;
-
-        if (!token || !numberOfWinners) {
-            return res.status(400).json({ error: 'Missing required parameters: token, numberOfWinners' });
-        }
-
-        // Fetch token details to get decimals
-        const tokenDetails = await fetchTokenDetails(token);
-        const decimals = tokenDetails.decimals || 0;
-
-        // Fetch token owners
-        const esdtOwners = await fetchEsdtOwners(token, includeSmartContracts);
-
-        if (esdtOwners.length === 0) {
-            return res.status(404).json({ error: 'No owners found for the specified token.' });
-        }
-
-        // Convert balances to human-readable format
-        const humanReadableOwners = esdtOwners.map(owner => ({
-            address: owner.address,
-            balance: (BigInt(owner.balance) / BigInt(10 ** decimals)).toString(), // Convert to human-readable
-        }));
-
-        // Randomly select winners
-        const shuffled = humanReadableOwners.sort(() => 0.5 - Math.random());
-        const winners = shuffled.slice(0, numberOfWinners);
-
-        // Generate CSV string for all token owners
-        const csvString = await generateCsv(humanReadableOwners);
-
-        // Respond with the snapshot
-        res.json({
-            token,
-            decimals,
-            totalOwners: esdtOwners.length,
-            winners,
-            csvString,
-            message: `${numberOfWinners} winners have been selected from the token "${token}".`,
-        });
-    } catch (error) {
-        console.error('Error during esdtSnapshotDraw:', error);
-        res.status(500).json({ error: error.message });
-    }
-});
 
 
 // Start the server
