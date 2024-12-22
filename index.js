@@ -502,6 +502,7 @@ const fetchEsdtOwners = async (token, includeSmartContracts) => {
     const size = 1000; // API allows fetching up to 1000 owners per call
     let from = 0;
     let lastAddress = null;
+    const throttle = pThrottle({ limit: 2, interval: 1000 }); // 2 requests per second
 
     try {
         while (true) {
@@ -513,21 +514,21 @@ const fetchEsdtOwners = async (token, includeSmartContracts) => {
                 url += `&start=${lastAddress}`;
             }
 
-            const response = await fetchWithRetry(url);
-            if (!response || response.length === 0) break;
+            const data = await throttle(() => fetchWithRetry(url))(); // Throttled request
 
-            // Filter out smart contracts if specified
-            const filteredOwners = response.filter(owner =>
+            if (!data || data.length === 0) break;
+
+            const filteredOwners = data.filter(owner =>
                 includeSmartContracts || !isSmartContractAddress(owner.address)
             );
 
             owners.push(...filteredOwners);
 
-            // If the total exceeds the result window, adjust for further calls
             if (from + size >= 10000) {
                 console.warn('Result window exceeded 10,000. Adjusting to fetch additional batches.');
-                lastAddress = response[response.length - 1].address; // Use the last fetched address as a pivot
+                lastAddress = data[data.length - 1].address; // Use the last fetched address as a pivot
                 from = 0; // Reset the result window
+                await new Promise(resolve => setTimeout(resolve, 2000)); // Small delay before next batch
             } else {
                 from += size;
             }
@@ -539,7 +540,6 @@ const fetchEsdtOwners = async (token, includeSmartContracts) => {
         throw error;
     }
 };
-
 
 // Helper function to fetch token details
 const fetchTokenDetails = async (token) => {
@@ -609,21 +609,21 @@ const fetchWithRetry = async (url, retries = 5) => {
         try {
             const response = await fetch(url);
             if (!response.ok) {
-                throw new Error(`HTTP Error ${response.status}`);
-            }
-            return await response.json();
-        } catch (error) {
-            if (attempt < retries && error.message.includes("HTTP Error 429")) {
-                console.warn(`Retrying request due to rate limit... (Attempt ${attempt})`);
-                await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, attempt))); // Exponential backoff
+                if (response.status === 429) {
+                    console.warn(`Rate limit hit. Retrying... (Attempt ${attempt})`);
+                    await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, attempt))); // Exponential backoff
+                } else {
+                    throw new Error(`HTTP Error ${response.status}`);
+                }
             } else {
-                throw error;
+                return await response.json();
             }
+        } catch (error) {
+            if (attempt >= retries) throw new Error(`Failed to fetch after ${retries} retries: ${error.message}`);
         }
     }
-    throw new Error("Failed to fetch data after retries.");
+    throw new Error('Exceeded maximum retry attempts');
 };
-
 
 // Start the server
 app.listen(PORT, () => {
