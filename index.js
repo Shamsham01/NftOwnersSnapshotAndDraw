@@ -250,7 +250,7 @@ app.post('/snapshotDraw', checkToken, async (req, res) => {
 
 // Throttle configuration: 5 requests per second
 const throttle = pThrottle({
-    limit: 5,      // Maximum of 5 requests
+    limit: 4,      // Maximum of 4 requests
     interval: 1000 // Per 1000 ms (1 second)
 });
 
@@ -612,22 +612,20 @@ const fetchWithRetry = async (url, retries = 5) => {
         try {
             const response = await fetch(url);
             if (!response.ok) {
-                if (response.status === 429) {
-                    console.warn(`Rate limit hit. Retrying... (Attempt ${attempt})`);
-                    await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, attempt))); // Exponential backoff
-                } else {
-                    throw new Error(`HTTP Error ${response.status}`);
-                }
-            } else {
-                return await response.json();
+                throw new Error(`HTTP Error ${response.status}`);
             }
+            return await response.json();
         } catch (error) {
-            if (attempt === retries) {
-                throw new Error(`Failed to fetch after ${retries} retries: ${error.message}`);
+            if (attempt < retries && error.message.includes("HTTP Error 429")) {
+                console.warn(`Rate limit hit. Retrying... (Attempt ${attempt})`);
+                await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, attempt))); // Exponential backoff
+            } else {
+                console.error(`Failed after ${attempt} attempts:`, error.message);
+                throw error;
             }
         }
     }
-    throw new Error('Exceeded maximum retry attempts');
+    throw new Error("Exceeded maximum retry attempts");
 };
 
 // Start the server
