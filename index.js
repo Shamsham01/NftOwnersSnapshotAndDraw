@@ -144,16 +144,17 @@ const getMetadataFileName = (attributes) => {
     return metadataKey.split('/')?.[1].split('.')?.[0];
 };
 
-// Function to generate CSV data as a string (includes all NFTs in the snapshot)
+// Function to generate CSV data as a string
 const generateCsv = async (data) => {
     const csvData = [];
 
     data.forEach((row) => {
         csvData.push({
-            owner: row.owner,
-            identifier: row.identifier,
-            metadataFileName: row.metadataFileName,
-            attributes: JSON.stringify(row.attributes) // Store attributes as JSON string
+            address: row.address || row.owner, // Use `address` for SFTs, `owner` for NFTs
+            identifier: row.identifier || '', // Include identifier if available
+            balance: row.balance || '', // Include balance if available
+            metadataFileName: row.metadataFileName || '', // Include metadata if available
+            attributes: row.attributes ? JSON.stringify(row.attributes) : '' // Store attributes as JSON string
         });
     });
 
@@ -229,9 +230,6 @@ app.post('/snapshotDraw', checkToken, async (req, res) => {
 
         // Generate unique owner stats
         const uniqueOwnerStats = generateUniqueOwnerStats(addresses);
-
-        // Generate CSV as a string with all NFTs in the snapshot (not just winners)
-        const csvString = await generateCsv(addresses);
 
         // Respond with the full NFT snapshot, winners, and unique stats
         res.json({
@@ -382,9 +380,6 @@ app.post('/stakedNftsSnapshotDraw', checkToken, async (req, res) => {
         const shuffled = stakedData.sort(() => 0.5 - Math.random());
         const winners = shuffled.slice(0, numberOfWinners);
 
-        // Generate CSV with all staked NFTs
-        const csvString = await generateCsv(stakedData);
-
         // Response includes selected winners, total staked count, and CSV snapshot
         res.json({
             winners,
@@ -467,36 +462,6 @@ const fetchSftOwners = async (collectionTicker, includeSmartContracts) => {
         throw error;
     }
 };
-
-// Helper function to generate CSV
-const generateCsv = async (data) => {
-    const csvData = [];
-
-    data.forEach(row => {
-        csvData.push({
-            address: row.address,
-            balance: row.balance, // Include SFT balance in the CSV
-        });
-    });
-
-    return new Promise((resolve, reject) => {
-        const csvStream = formatCsv({ headers: true });
-        const chunks = [];
-
-        csvStream.on('data', chunk => chunks.push(chunk.toString()));
-        csvStream.on('end', () => resolve(chunks.join('')));
-        csvStream.on('error', reject);
-
-        csvData.forEach(row => csvStream.write(row));
-        csvStream.end();
-    });
-};
-
-// Middleware to check for smart contract addresses
-const isSmartContractAddress = (address) => {
-    return address.startsWith('erd1qqqqqqqqqqqqq');
-};
-
 
 // Start the server
 app.listen(PORT, () => {
