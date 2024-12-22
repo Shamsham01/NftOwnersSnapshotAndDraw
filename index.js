@@ -499,16 +499,21 @@ const fetchSftOwners = async (collectionTicker, editions, includeSmartContracts)
 // Helper function to fetch ESDT owners
 const fetchEsdtOwners = async (token, includeSmartContracts) => {
     const owners = new Map();
-    const size = 1000; // Max batch size allowed by API
+    const size = 1000; // Max batch size
     let from = 0;
 
     try {
         while (true) {
+            if (from + size > 10000) {
+                console.warn('Reached API result window limit of 10,000. Restarting from 0.');
+                from = 0; // Reset and adjust logic to avoid exceeding API limits
+            }
+
             const url = `${apiProvider.mainnet}/tokens/${token}/accounts?size=${size}&from=${from}`;
             const data = await fetchWithRetry(url);
 
             if (!data || data.length === 0) {
-                break; // No more data to fetch
+                break; // No more data
             }
 
             data.forEach(owner => {
@@ -522,7 +527,7 @@ const fetchEsdtOwners = async (token, includeSmartContracts) => {
 
             from += size;
 
-            // Stop fetching if we exceed API limits
+            // Stop fetching if we reach a large number of results
             if (owners.size >= 100000) {
                 console.warn('Fetched 100,000 unique owners. Stopping further processing.');
                 break;
@@ -535,7 +540,6 @@ const fetchEsdtOwners = async (token, includeSmartContracts) => {
         throw error;
     }
 };
-
 
 // Helper function to fetch token details
 const fetchTokenDetails = async (token) => {
@@ -600,7 +604,7 @@ app.post('/esdtSnapshotDraw', checkToken, async (req, res) => {
 });
 
 // Helper function for fetch with retry logic and exponential backoff
-const fetchWithRetry = async (url, retries = 5) => {
+const fetchWithRetry = async (url, retries = 10) => {
     for (let attempt = 1; attempt <= retries; attempt++) {
         try {
             const response = await fetch(url);
@@ -610,8 +614,8 @@ const fetchWithRetry = async (url, retries = 5) => {
             return await response.json();
         } catch (error) {
             if (attempt < retries && error.message.includes("HTTP Error 429")) {
-                console.warn(`Rate limit hit. Retrying... (Attempt ${attempt})`);
-                await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, attempt))); // Exponential backoff
+                console.warn(`Rate limit hit. Retrying in ${2 ** attempt} seconds... (Attempt ${attempt})`);
+                await new Promise(resolve => setTimeout(resolve, 1000 * 2 ** attempt)); // Exponential backoff
             } else {
                 console.error(`Failed after ${attempt} attempts:`, error.message);
                 throw error;
@@ -620,6 +624,7 @@ const fetchWithRetry = async (url, retries = 5) => {
     }
     throw new Error("Exceeded maximum retry attempts");
 };
+
 
 // Start the server
 app.listen(PORT, () => {
