@@ -496,6 +496,113 @@ const fetchSftOwners = async (collectionTicker, editions, includeSmartContracts)
     }
 };
 
+// Helper function to fetch ESDT owners
+const fetchEsdtOwners = async (token, includeSmartContracts) => {
+    const owners = [];
+    const size = 1000; // API allows fetching up to 1000 owners per call
+    let from = 0;
+    let hasMore = true;
+
+    try {
+        while (hasMore) {
+            const response = await fetch(
+                `${apiProvider.mainnet}/tokens/${token}/accounts?size=${size}&from=${from}`
+            );
+
+            if (!response.ok) {
+                console.error('API response:', response.status, await response.text());
+                throw new Error(`Failed to fetch owners for token "${token}".`);
+            }
+
+            const data = await response.json();
+            if (data.length === 0) {
+                hasMore = false; // No more owners to fetch
+            } else {
+                // Filter out smart contracts if specified
+                const filteredOwners = data.filter(owner =>
+                    includeSmartContracts || !isSmartContractAddress(owner.address)
+                );
+
+                // Add owners to the result array
+                owners.push(...filteredOwners);
+
+                // Move to the next page
+                from += size;
+                hasMore = data.length === size; // If less than 1000, we reached the end
+            }
+        }
+
+        return owners;
+    } catch (error) {
+        console.error('Error fetching ESDT owners:', error.message);
+        throw error;
+    }
+};
+
+// Helper function to fetch token details
+const fetchTokenDetails = async (token) => {
+    try {
+        const response = await fetch(`${apiProvider.mainnet}/tokens/${token}`);
+        if (!response.ok) {
+            console.error('API response:', response.status, await response.text());
+            throw new Error(`Failed to fetch details for token "${token}".`);
+        }
+        return await response.json();
+    } catch (error) {
+        console.error('Error fetching token details:', error.message);
+        throw error;
+    }
+};
+
+// Endpoint for ESDT Snapshot Draw
+app.post('/esdtSnapshotDraw', checkToken, async (req, res) => {
+    try {
+        const { token, includeSmartContracts, numberOfWinners } = req.body;
+
+        if (!token || !numberOfWinners) {
+            return res.status(400).json({ error: 'Missing required parameters: token, numberOfWinners' });
+        }
+
+        // Fetch token details to get decimals
+        const tokenDetails = await fetchTokenDetails(token);
+        const decimals = tokenDetails.decimals || 0;
+
+        // Fetch token owners
+        const esdtOwners = await fetchEsdtOwners(token, includeSmartContracts);
+
+        if (esdtOwners.length === 0) {
+            return res.status(404).json({ error: 'No owners found for the specified token.' });
+        }
+
+        // Convert balances to human-readable format
+        const humanReadableOwners = esdtOwners.map(owner => ({
+            address: owner.address,
+            balance: (BigInt(owner.balance) / BigInt(10 ** decimals)).toString(), // Convert to human-readable
+        }));
+
+        // Randomly select winners
+        const shuffled = humanReadableOwners.sort(() => 0.5 - Math.random());
+        const winners = shuffled.slice(0, numberOfWinners);
+
+        // Generate CSV string for all token owners
+        const csvString = await generateCsv(humanReadableOwners);
+
+        // Respond with the snapshot
+        res.json({
+            token,
+            decimals,
+            totalOwners: esdtOwners.length,
+            winners,
+            csvString,
+            message: `${numberOfWinners} winners have been selected from the token "${token}".`,
+        });
+    } catch (error) {
+        console.error('Error during esdtSnapshotDraw:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+
 // Start the server
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
