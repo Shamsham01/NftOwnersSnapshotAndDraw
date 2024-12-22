@@ -498,7 +498,7 @@ const fetchSftOwners = async (collectionTicker, editions, includeSmartContracts)
 
 // Helper function to fetch ESDT owners
 const fetchEsdtOwners = async (token, includeSmartContracts) => {
-    const owners = [];
+    const owners = new Map(); // Use a Map to store unique addresses
     const size = 1000; // Max batch size allowed by API
     let lastFetchedAddress = null; // Keeps track of the last fetched address for pagination
 
@@ -506,7 +506,7 @@ const fetchEsdtOwners = async (token, includeSmartContracts) => {
         while (true) {
             let url = `${apiProvider.mainnet}/tokens/${token}/accounts?size=${size}`;
             if (lastFetchedAddress) {
-                url += `&fromAddress=${lastFetchedAddress}`; // Use the last fetched address for pagination
+                url += `&fromAddress=${lastFetchedAddress}`; // Use last fetched address for pagination
             }
 
             const data = await fetchWithRetry(url);
@@ -516,25 +516,28 @@ const fetchEsdtOwners = async (token, includeSmartContracts) => {
                 break;
             }
 
-            // Filter smart contracts if required
-            const filteredData = data.filter(owner =>
-                includeSmartContracts || !isSmartContractAddress(owner.address)
-            );
-
-            // Add filtered owners to the result
-            owners.push(...filteredData);
+            // Filter and deduplicate owners
+            data.forEach(owner => {
+                if (includeSmartContracts || !isSmartContractAddress(owner.address)) {
+                    // Use address as the key to ensure uniqueness
+                    owners.set(owner.address, {
+                        address: owner.address,
+                        balance: owner.balance,
+                    });
+                }
+            });
 
             // Update the last fetched address
             lastFetchedAddress = data[data.length - 1].address;
 
-            // Check if the total fetched exceeds 100,000 and stop
-            if (owners.length >= 100000) {
-                console.warn(`Fetched 100,000 owners. Limiting further processing.`);
+            // Exit loop if owners exceed 100,000
+            if (owners.size >= 100000) {
+                console.warn('Fetched 100,000 unique owners. Stopping further processing.');
                 break;
             }
         }
 
-        return owners;
+        return Array.from(owners.values()); // Convert Map to an array
     } catch (error) {
         console.error('Error fetching ESDT owners:', error.message);
         throw error;
