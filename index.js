@@ -231,6 +231,9 @@ app.post('/snapshotDraw', checkToken, async (req, res) => {
         // Generate unique owner stats
         const uniqueOwnerStats = generateUniqueOwnerStats(addresses);
 
+        // Generate CSV string for all NFT owners
+        const csvString = await generateCsv(addresses);
+
         // Respond with the full NFT snapshot, winners, and unique stats
         res.json({
             winners,
@@ -243,6 +246,7 @@ app.post('/snapshotDraw', checkToken, async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 });
+
 
 // Throttle configuration: 5 requests per second
 const throttle = pThrottle({
@@ -380,10 +384,13 @@ app.post('/stakedNftsSnapshotDraw', checkToken, async (req, res) => {
         const shuffled = stakedData.sort(() => 0.5 - Math.random());
         const winners = shuffled.slice(0, numberOfWinners);
 
+        // Generate CSV string for all staked NFTs
+        const csvString = await generateCsv(stakedData);
+
         // Response includes selected winners, total staked count, and CSV snapshot
         res.json({
             winners,
-            totalStakedCount,  // Adding total number of staked NFTs to response
+            totalStakedCount, // Adding total number of staked NFTs to response
             message: `${numberOfWinners} winners have been selected from staked NFTs in collection ${collectionTicker}.`,
             csvString, // All staked NFTs data as CSV
         });
@@ -392,6 +399,7 @@ app.post('/stakedNftsSnapshotDraw', checkToken, async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 });
+
 
 // New endpoint for SFT snapshot draw
 app.post('/sftSnapshotDraw', checkToken, async (req, res) => {
