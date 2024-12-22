@@ -499,38 +499,38 @@ const fetchSftOwners = async (collectionTicker, editions, includeSmartContracts)
 // Helper function to fetch ESDT owners
 const fetchEsdtOwners = async (token, includeSmartContracts) => {
     const owners = [];
-    const size = 1000; // API allows fetching up to 1000 owners per call
-    let from = 0;
-    let lastAddress = null;
-    const throttle = pThrottle({ limit: 2, interval: 1000 }); // 2 requests per second
+    const size = 1000; // Max batch size allowed by API
+    let lastFetchedAddress = null; // Keeps track of the last fetched address for pagination
 
     try {
         while (true) {
             let url = `${apiProvider.mainnet}/tokens/${token}/accounts?size=${size}`;
-            if (from > 0) {
-                url += `&from=${from}`;
-            }
-            if (lastAddress) {
-                url += `&start=${lastAddress}`;
+            if (lastFetchedAddress) {
+                url += `&fromAddress=${lastFetchedAddress}`; // Use the last fetched address for pagination
             }
 
-            const data = await throttle(() => fetchWithRetry(url))(); // Throttled request
+            const data = await fetchWithRetry(url);
 
-            if (!data || data.length === 0) break;
+            // Exit loop if no data returned
+            if (!data || data.length === 0) {
+                break;
+            }
 
-            const filteredOwners = data.filter(owner =>
+            // Filter smart contracts if required
+            const filteredData = data.filter(owner =>
                 includeSmartContracts || !isSmartContractAddress(owner.address)
             );
 
-            owners.push(...filteredOwners);
+            // Add filtered owners to the result
+            owners.push(...filteredData);
 
-            if (from + size >= 10000) {
-                console.warn('Result window exceeded 10,000. Adjusting to fetch additional batches.');
-                lastAddress = data[data.length - 1].address; // Use the last fetched address as a pivot
-                from = 0; // Reset the result window
-                await new Promise(resolve => setTimeout(resolve, 2000)); // Small delay before next batch
-            } else {
-                from += size;
+            // Update the last fetched address
+            lastFetchedAddress = data[data.length - 1].address;
+
+            // Check if the total fetched exceeds 100,000 and stop
+            if (owners.length >= 100000) {
+                console.warn(`Fetched 100,000 owners. Limiting further processing.`);
+                break;
             }
         }
 
@@ -619,7 +619,9 @@ const fetchWithRetry = async (url, retries = 5) => {
                 return await response.json();
             }
         } catch (error) {
-            if (attempt >= retries) throw new Error(`Failed to fetch after ${retries} retries: ${error.message}`);
+            if (attempt === retries) {
+                throw new Error(`Failed to fetch after ${retries} retries: ${error.message}`);
+            }
         }
     }
     throw new Error('Exceeded maximum retry attempts');
