@@ -498,28 +498,21 @@ const fetchSftOwners = async (collectionTicker, editions, includeSmartContracts)
 
 // Helper function to fetch ESDT owners
 const fetchEsdtOwners = async (token, includeSmartContracts) => {
-    const owners = new Map(); // Use a Map to store unique addresses
+    const owners = new Map();
     const size = 1000; // Max batch size allowed by API
-    let lastFetchedAddress = null; // Keeps track of the last fetched address for pagination
+    let from = 0;
 
     try {
         while (true) {
-            let url = `${apiProvider.mainnet}/tokens/${token}/accounts?size=${size}`;
-            if (lastFetchedAddress) {
-                url += `&fromAddress=${lastFetchedAddress}`; // Use last fetched address for pagination
-            }
-
+            const url = `${apiProvider.mainnet}/tokens/${token}/accounts?size=${size}&from=${from}`;
             const data = await fetchWithRetry(url);
 
-            // Exit loop if no data returned
             if (!data || data.length === 0) {
-                break;
+                break; // No more data to fetch
             }
 
-            // Filter and deduplicate owners
             data.forEach(owner => {
                 if (includeSmartContracts || !isSmartContractAddress(owner.address)) {
-                    // Use address as the key to ensure uniqueness
                     owners.set(owner.address, {
                         address: owner.address,
                         balance: owner.balance,
@@ -527,22 +520,22 @@ const fetchEsdtOwners = async (token, includeSmartContracts) => {
                 }
             });
 
-            // Update the last fetched address
-            lastFetchedAddress = data[data.length - 1].address;
+            from += size;
 
-            // Exit loop if owners exceed 100,000
+            // Stop fetching if we exceed API limits
             if (owners.size >= 100000) {
                 console.warn('Fetched 100,000 unique owners. Stopping further processing.');
                 break;
             }
         }
 
-        return Array.from(owners.values()); // Convert Map to an array
+        return Array.from(owners.values());
     } catch (error) {
         console.error('Error fetching ESDT owners:', error.message);
         throw error;
     }
 };
+
 
 // Helper function to fetch token details
 const fetchTokenDetails = async (token) => {
