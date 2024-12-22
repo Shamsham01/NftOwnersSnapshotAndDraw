@@ -248,9 +248,9 @@ app.post('/snapshotDraw', checkToken, async (req, res) => {
 });
 
 
-// Throttle configuration: 5 requests per second
+// Throttle configuration: 2 requests per second
 const throttle = pThrottle({
-    limit: 4,      // Maximum of 4 requests
+    limit: 2,      // Maximum of 4 requests
     interval: 1000 // Per 1000 ms (1 second)
 });
 
