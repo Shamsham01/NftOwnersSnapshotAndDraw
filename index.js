@@ -174,14 +174,18 @@ const generateCsv = async (data) => {
 // Function to generate unique owner stats
 const generateUniqueOwnerStats = (data) => {
     const stats = {};
-    data.forEach(({ owner }) => {
-        if (!stats[owner]) {
-            stats[owner] = 0;
+    data.forEach(({ address }) => {
+        if (!stats[address]) {
+            stats[address] = 0;
         }
-        stats[owner]++;
+        stats[address]++;
     });
-    return Object.entries(stats).map(([owner, count]) => ({ owner, tokensCount: count }));
+    return Object.entries(stats).map(([address, count]) => ({
+        owner: address,
+        tokensCount: count,
+    }));
 };
+
 
 // Route for snapshotDraw
 app.post('/snapshotDraw', checkToken, async (req, res) => {
