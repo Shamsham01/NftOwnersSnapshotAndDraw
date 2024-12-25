@@ -401,7 +401,7 @@ app.post('/stakedNftsSnapshotDraw', checkToken, async (req, res) => {
 });
 
 
-// New endpoint for SFT snapshot draw
+// Updated endpoint for SFT snapshot draw
 app.post('/sftSnapshotDraw', checkToken, async (req, res) => {
     try {
         const { collectionTicker, editions, numberOfWinners, includeSmartContracts } = req.body;
@@ -419,6 +419,9 @@ app.post('/sftSnapshotDraw', checkToken, async (req, res) => {
             return res.status(404).json({ error: 'No SFT owners found for the specified collection and editions' });
         }
 
+        // Generate unique owner stats
+        const uniqueOwnerStats = generateUniqueOwnerStats(sftOwners);
+
         // Randomly select winners
         const shuffled = sftOwners.sort(() => 0.5 - Math.random());
         const winners = shuffled.slice(0, numberOfWinners);
@@ -432,6 +435,7 @@ app.post('/sftSnapshotDraw', checkToken, async (req, res) => {
         // Response payload
         res.json({
             winners,
+            uniqueOwnerStats, // Include unique owner stats
             totalOwners: sftOwners.length,
             message: `${numberOfWinners} winners have been selected from the SFT collection "${collectionTicker}" across editions "${editions}".`,
             csvString,
@@ -441,6 +445,21 @@ app.post('/sftSnapshotDraw', checkToken, async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 });
+
+const generateUniqueOwnerStats = (data) => {
+    const stats = {};
+    data.forEach(({ address }) => {
+        if (!stats[address]) {
+            stats[address] = 0;
+        }
+        stats[address]++;
+    });
+    return Object.entries(stats).map(([address, count]) => ({
+        address,
+        tokensCount: count,
+    }));
+};
+
 
 // Helper function to fetch SFT owners
 const fetchSftOwners = async (collectionTicker, editions, includeSmartContracts) => {
