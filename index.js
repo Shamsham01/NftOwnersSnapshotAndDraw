@@ -183,13 +183,14 @@ const generateUniqueOwnerStats = (data) => {
         stats[address] += parseInt(balance, 10); // Ensure balance is treated as a number
     });
 
-    // Convert the stats object into an array of owner statistics
-    return Object.entries(stats).map(([address, count]) => ({
-        owner: address,
-        tokensCount: count,
-    }));
+    // Convert the stats object into an array of owner statistics and sort by count
+    return Object.entries(stats)
+        .map(([address, count]) => ({
+            owner: address,
+            tokensCount: count,
+        }))
+        .sort((a, b) => b.tokensCount - a.tokensCount); // Sort by tokensCount descending
 };
-
 
 // Route for snapshotDraw
 app.post('/snapshotDraw', checkToken, async (req, res) => {
