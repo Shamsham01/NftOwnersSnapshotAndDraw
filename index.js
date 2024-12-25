@@ -174,12 +174,16 @@ const generateCsv = async (data) => {
 // Function to generate unique owner stats
 const generateUniqueOwnerStats = (data) => {
     const stats = {};
-    data.forEach(({ address }) => {
+
+    // Iterate through all entries and aggregate the balances
+    data.forEach(({ address, balance }) => {
         if (!stats[address]) {
             stats[address] = 0;
         }
-        stats[address]++;
+        stats[address] += parseInt(balance, 10); // Ensure balance is treated as a number
     });
+
+    // Convert the stats object into an array of owner statistics
     return Object.entries(stats).map(([address, count]) => ({
         owner: address,
         tokensCount: count,
