@@ -446,20 +446,6 @@ app.post('/sftSnapshotDraw', checkToken, async (req, res) => {
     }
 });
 
-const generateUniqueOwnerStats = (data) => {
-    const stats = {};
-    data.forEach(({ address }) => {
-        if (!stats[address]) {
-            stats[address] = 0;
-        }
-        stats[address]++;
-    });
-    return Object.entries(stats).map(([address, count]) => ({
-        address,
-        tokensCount: count,
-    }));
-};
-
 
 // Helper function to fetch SFT owners
 const fetchSftOwners = async (collectionTicker, editions, includeSmartContracts) => {
