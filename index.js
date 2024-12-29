@@ -613,7 +613,7 @@ app.post('/esdtSnapshotDraw', checkToken, async (req, res) => {
         // Format balances using decimals
         const formattedOwners = esdtOwners.map(owner => ({
             address: owner.address,
-            balance: (BigInt(owner.balanceRaw || 0) / BigInt(10 ** decimals)).toFixed(decimals), // Format with decimals
+            balance: (Number(BigInt(owner.balanceRaw || 0)) / 10 ** decimals).toFixed(decimals), // Convert BigInt to Number and format
         }));
 
         // Generate unique owner stats with formatted balances
@@ -657,6 +657,7 @@ app.post('/esdtSnapshotDraw', checkToken, async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 });
+
 
 // Start the server
 app.listen(PORT, () => {
