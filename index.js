@@ -615,7 +615,7 @@ app.post('/esdtSnapshotDraw', checkToken, async (req, res) => {
             .filter(owner => owner.balanceRaw !== undefined) // Exclude undefined balances
             .map(owner => ({
                 address: owner.address,
-                balance: (BigInt(owner.balanceRaw || 0) / BigInt(10 ** decimals)).toString(), // Safely handle undefined
+                balance: BigInt(owner.balanceRaw || 0), // Keep as BigInt for precise calculations
             }));
 
         // Generate unique owner stats, handling undefined balances
@@ -623,7 +623,7 @@ app.post('/esdtSnapshotDraw', checkToken, async (req, res) => {
             if (!acc[owner.address]) {
                 acc[owner.address] = BigInt(0);
             }
-            acc[owner.address] += BigInt(owner.balance || 0); // Safely add balance
+            acc[owner.address] += owner.balance; // Add balance as BigInt
             return acc;
         }, {});
 
@@ -635,11 +635,20 @@ app.post('/esdtSnapshotDraw', checkToken, async (req, res) => {
         uniqueOwnerStatsArray.sort((a, b) => BigInt(b.tokensCount) - BigInt(a.tokensCount)); // Sort descending by tokensCount
 
         // Randomly select winners
-        const shuffled = humanReadableOwners.sort(() => 0.5 - Math.random());
+        const shuffled = humanReadableOwners
+            .map(owner => ({
+                ...owner,
+                balance: (owner.balance / BigInt(10 ** decimals)).toString(), // Convert to human-readable format for winners
+            }))
+            .sort(() => 0.5 - Math.random());
+
         const winners = shuffled.slice(0, numberOfWinners);
 
         // Generate CSV string for all token owners
-        const csvString = await generateCsv(humanReadableOwners);
+        const csvString = await generateCsv(humanReadableOwners.map(owner => ({
+            address: owner.address,
+            balance: (owner.balance / BigInt(10 ** decimals)).toString(), // Convert to human-readable format for CSV
+        })));
 
         // Respond with the snapshot including unique owner stats
         res.json({
