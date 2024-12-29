@@ -610,20 +610,18 @@ app.post('/esdtSnapshotDraw', checkToken, async (req, res) => {
             return res.status(404).json({ error: 'No owners found for the specified token.' });
         }
 
-        // Convert balances to human-readable decimal format, validating `balanceRaw`
-        const humanReadableOwners = esdtOwners
-            .filter(owner => owner.balanceRaw !== undefined) // Exclude undefined balances
-            .map(owner => ({
-                address: owner.address,
-                balance: BigInt(owner.balanceRaw || 0), // Keep as BigInt for precise calculations
-            }));
+        // Convert balances to human-readable decimal format for calculations
+        const humanReadableOwners = esdtOwners.map(owner => ({
+            address: owner.address,
+            balance: BigInt(owner.balanceRaw), // Store as BigInt for accurate calculations
+        }));
 
-        // Generate unique owner stats, handling undefined balances
+        // Generate unique owner stats
         const uniqueOwnerStats = humanReadableOwners.reduce((acc, owner) => {
             if (!acc[owner.address]) {
                 acc[owner.address] = BigInt(0);
             }
-            acc[owner.address] += owner.balance; // Add balance as BigInt
+            acc[owner.address] += owner.balance; // Accumulate balances
             return acc;
         }, {});
 
@@ -632,13 +630,14 @@ app.post('/esdtSnapshotDraw', checkToken, async (req, res) => {
             tokensCount: (balance / BigInt(10 ** decimals)).toString(), // Convert to human-readable format
         }));
 
-        uniqueOwnerStatsArray.sort((a, b) => BigInt(b.tokensCount) - BigInt(a.tokensCount)); // Sort descending by tokensCount
+        // Sort by tokensCount in descending order
+        uniqueOwnerStatsArray.sort((a, b) => BigInt(b.tokensCount) - BigInt(a.tokensCount));
 
         // Randomly select winners
         const shuffled = humanReadableOwners
             .map(owner => ({
                 ...owner,
-                balance: (owner.balance / BigInt(10 ** decimals)).toString(), // Convert to human-readable format for winners
+                balance: (owner.balance / BigInt(10 ** decimals)).toString(), // Convert to human-readable format for output
             }))
             .sort(() => 0.5 - Math.random());
 
@@ -655,7 +654,7 @@ app.post('/esdtSnapshotDraw', checkToken, async (req, res) => {
             token,
             decimals,
             totalOwners: esdtOwners.length,
-            uniqueOwnerStats: uniqueOwnerStatsArray, // Include unique owner stats here
+            uniqueOwnerStats: uniqueOwnerStatsArray,
             winners,
             csvString,
             message: `${numberOfWinners} winners have been selected from the token "${token}".`,
