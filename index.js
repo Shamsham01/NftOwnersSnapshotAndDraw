@@ -599,7 +599,7 @@ app.post('/esdtSnapshotDraw', checkToken, async (req, res) => {
             return res.status(400).json({ error: 'Missing required parameters: token, numberOfWinners' });
         }
 
-        // Fetch token details to get decimals (not used for raw data but fetched for reference)
+        // Fetch token details to get decimals
         const tokenDetails = await fetchTokenDetails(token);
         const decimals = tokenDetails.decimals || 0;
 
@@ -610,42 +610,44 @@ app.post('/esdtSnapshotDraw', checkToken, async (req, res) => {
             return res.status(404).json({ error: 'No owners found for the specified token.' });
         }
 
-        // Use raw chain data for balances
-        const rawOwners = esdtOwners.map(owner => ({
+        // Format balances using decimals
+        const formattedOwners = esdtOwners.map(owner => ({
             address: owner.address,
-            balanceRaw: owner.balanceRaw, // Keep raw data without formatting
+            balance: (BigInt(owner.balanceRaw || 0) / BigInt(10 ** decimals)).toFixed(decimals), // Format with decimals
         }));
 
-        // Generate unique owner stats (using raw balances directly)
-        const uniqueOwnerStats = rawOwners.reduce((acc, owner) => {
+        // Generate unique owner stats with formatted balances
+        const uniqueOwnerStats = formattedOwners.reduce((acc, owner) => {
             if (!acc[owner.address]) {
-                acc[owner.address] = BigInt(0);
+                acc[owner.address] = 0;
             }
-            acc[owner.address] += BigInt(owner.balanceRaw || 0);
+            acc[owner.address] += parseFloat(owner.balance); // Accumulate formatted balance
             return acc;
         }, {});
 
-        const uniqueOwnerStatsArray = Object.entries(uniqueOwnerStats).map(([address, balanceRaw]) => ({
+        const uniqueOwnerStatsArray = Object.entries(uniqueOwnerStats).map(([address, balance]) => ({
             owner: address,
-            tokensCount: balanceRaw.toString(), // Keep as raw BigInt string
+            tokensCount: balance.toFixed(decimals), // Ensure consistent decimal format
         }));
 
-        // Select random winners from raw owners
-        const shuffled = rawOwners.sort(() => 0.5 - Math.random());
+        uniqueOwnerStatsArray.sort((a, b) => parseFloat(b.tokensCount) - parseFloat(a.tokensCount)); // Sort descending
+
+        // Randomly select winners from formatted owners
+        const shuffled = formattedOwners.sort(() => 0.5 - Math.random());
         const winners = shuffled.slice(0, numberOfWinners);
 
-        // Generate CSV string with raw data
-        const csvString = await generateCsv(rawOwners.map(owner => ({
+        // Generate CSV string with formatted balances
+        const csvString = await generateCsv(formattedOwners.map(owner => ({
             address: owner.address,
-            balanceRaw: owner.balanceRaw, // Include raw balance in CSV
+            balance: owner.balance, // Include formatted balance in CSV
         })));
 
-        // Respond with raw chain data
+        // Respond with the formatted data
         res.json({
             token,
             decimals,
             totalOwners: esdtOwners.length,
-            uniqueOwnerStats: uniqueOwnerStatsArray, // Include raw balances
+            uniqueOwnerStats: uniqueOwnerStatsArray, // Include formatted stats
             winners,
             csvString,
             message: `${numberOfWinners} winners have been selected from the token "${token}".`,
@@ -655,7 +657,6 @@ app.post('/esdtSnapshotDraw', checkToken, async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 });
-
 
 // Start the server
 app.listen(PORT, () => {
