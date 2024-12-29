@@ -616,7 +616,7 @@ app.post('/esdtSnapshotDraw', checkToken, async (req, res) => {
             balance: BigInt(owner.balanceRaw || 0), // Use BigInt for precise calculations
         }));
 
-        // Generate unique owner stats using BigInt
+        // Generate unique owner stats
         const uniqueOwnerStats = humanReadableOwners.reduce((acc, owner) => {
             if (!acc[owner.address]) {
                 acc[owner.address] = BigInt(0);
@@ -625,20 +625,14 @@ app.post('/esdtSnapshotDraw', checkToken, async (req, res) => {
             return acc;
         }, {});
 
-        // Convert unique owner stats into an array
+        // Convert unique owner stats to an array
         const uniqueOwnerStatsArray = Object.entries(uniqueOwnerStats).map(([address, balance]) => ({
             owner: address,
-            tokensCount: balance, // Keep as BigInt for sorting
+            tokensCount: (balance / BigInt(10 ** decimals)).toString(), // Convert to human-readable string
         }));
 
-        // Sort uniqueOwnerStatsArray using BigInt for comparison
-        uniqueOwnerStatsArray.sort((a, b) => b.tokensCount - a.tokensCount); // BigInt comparison
-
-        // Convert balances to human-readable format for response
-        const readableStatsArray = uniqueOwnerStatsArray.map(stat => ({
-            owner: stat.owner,
-            tokensCount: (stat.tokensCount / BigInt(10 ** decimals)).toString(), // Convert to string
-        }));
+        // Sort uniqueOwnerStatsArray safely (convert tokensCount to a number for sorting)
+        uniqueOwnerStatsArray.sort((a, b) => parseFloat(b.tokensCount) - parseFloat(a.tokensCount));
 
         // Randomly select winners
         const shuffled = humanReadableOwners
@@ -661,7 +655,7 @@ app.post('/esdtSnapshotDraw', checkToken, async (req, res) => {
             token,
             decimals,
             totalOwners: esdtOwners.length,
-            uniqueOwnerStats: readableStatsArray, // Human-readable unique owner stats
+            uniqueOwnerStats: uniqueOwnerStatsArray, // Human-readable unique owner stats
             winners,
             csvString,
             message: `${numberOfWinners} winners have been selected from the token "${token}".`,
@@ -671,7 +665,6 @@ app.post('/esdtSnapshotDraw', checkToken, async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 });
-
 
 
 // Start the server
