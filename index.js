@@ -590,7 +590,7 @@ const fetchTokenDetails = async (token) => {
     }
 };
 
-// Updated endpoint for ESDT Snapshot Draw
+// Updated endpoint for ESDT Snapshot Draw (returning raw chain data)
 app.post('/esdtSnapshotDraw', checkToken, async (req, res) => {
     try {
         const { token, includeSmartContracts, numberOfWinners } = req.body;
@@ -599,7 +599,7 @@ app.post('/esdtSnapshotDraw', checkToken, async (req, res) => {
             return res.status(400).json({ error: 'Missing required parameters: token, numberOfWinners' });
         }
 
-        // Fetch token details to get decimals
+        // Fetch token details to get decimals (not used for raw data but fetched for reference)
         const tokenDetails = await fetchTokenDetails(token);
         const decimals = tokenDetails.decimals || 0;
 
@@ -610,52 +610,42 @@ app.post('/esdtSnapshotDraw', checkToken, async (req, res) => {
             return res.status(404).json({ error: 'No owners found for the specified token.' });
         }
 
-        // Convert balances to BigInt for calculations
-        const humanReadableOwners = esdtOwners.map(owner => ({
+        // Use raw chain data for balances
+        const rawOwners = esdtOwners.map(owner => ({
             address: owner.address,
-            balance: BigInt(owner.balanceRaw || 0), // Use BigInt for precise calculations
+            balanceRaw: owner.balanceRaw, // Keep raw data without formatting
         }));
 
-        // Generate unique owner stats
-        const uniqueOwnerStats = humanReadableOwners.reduce((acc, owner) => {
+        // Generate unique owner stats (using raw balances directly)
+        const uniqueOwnerStats = rawOwners.reduce((acc, owner) => {
             if (!acc[owner.address]) {
                 acc[owner.address] = BigInt(0);
             }
-            acc[owner.address] += owner.balance; // Accumulate balances as BigInt
+            acc[owner.address] += BigInt(owner.balanceRaw || 0);
             return acc;
         }, {});
 
-        // Convert unique owner stats to an array
-        const uniqueOwnerStatsArray = Object.entries(uniqueOwnerStats).map(([address, balance]) => ({
+        const uniqueOwnerStatsArray = Object.entries(uniqueOwnerStats).map(([address, balanceRaw]) => ({
             owner: address,
-            tokensCount: (balance / BigInt(10 ** decimals)).toString(), // Convert to human-readable string
+            tokensCount: balanceRaw.toString(), // Keep as raw BigInt string
         }));
 
-        // Sort uniqueOwnerStatsArray safely (convert tokensCount to a number for sorting)
-        uniqueOwnerStatsArray.sort((a, b) => parseFloat(b.tokensCount) - parseFloat(a.tokensCount));
-
-        // Randomly select winners
-        const shuffled = humanReadableOwners
-            .map(owner => ({
-                ...owner,
-                balance: (owner.balance / BigInt(10 ** decimals)).toString(), // Convert to human-readable for winners
-            }))
-            .sort(() => 0.5 - Math.random());
-
+        // Select random winners from raw owners
+        const shuffled = rawOwners.sort(() => 0.5 - Math.random());
         const winners = shuffled.slice(0, numberOfWinners);
 
-        // Generate CSV string for all token owners
-        const csvString = await generateCsv(humanReadableOwners.map(owner => ({
+        // Generate CSV string with raw data
+        const csvString = await generateCsv(rawOwners.map(owner => ({
             address: owner.address,
-            balance: (owner.balance / BigInt(10 ** decimals)).toString(), // Convert to human-readable format for CSV
+            balanceRaw: owner.balanceRaw, // Include raw balance in CSV
         })));
 
-        // Respond with the snapshot including unique owner stats
+        // Respond with raw chain data
         res.json({
             token,
             decimals,
             totalOwners: esdtOwners.length,
-            uniqueOwnerStats: uniqueOwnerStatsArray, // Human-readable unique owner stats
+            uniqueOwnerStats: uniqueOwnerStatsArray, // Include raw balances
             winners,
             csvString,
             message: `${numberOfWinners} winners have been selected from the token "${token}".`,
