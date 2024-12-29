@@ -553,7 +553,8 @@ const fetchEsdtOwners = async (token, includeSmartContracts) => {
                 if (includeSmartContracts || !isSmartContractAddress(owner.address)) {
                     owners.set(owner.address, {
                         address: owner.address,
-                        balance: owner.balance, // Keep raw balance for later conversion
+                        // Preserve the raw balance for conversion
+                        balanceRaw: owner.balance,
                     });
                 }
             });
@@ -573,6 +574,7 @@ const fetchEsdtOwners = async (token, includeSmartContracts) => {
         throw error;
     }
 };
+
 
 // Helper function to fetch token details
 const fetchTokenDetails = async (token) => {
@@ -608,49 +610,41 @@ app.post('/esdtSnapshotDraw', checkToken, async (req, res) => {
             return res.status(404).json({ error: 'No owners found for the specified token.' });
         }
 
-        // Convert balances to human-readable decimal format
+        // Convert balances to human-readable decimal format without losing precision
         const humanReadableOwners = esdtOwners.map(owner => ({
             address: owner.address,
-            balance: parseFloat((BigInt(owner.balance) / BigInt(10 ** decimals)).toString()), // Convert to decimal
+            balance: (BigInt(owner.balanceRaw) / BigInt(10 ** decimals)).toString(), // Keep precision by using BigInt
         }));
 
-        // Generate unique owner stats with decimal balances
+        // Generate unique owner stats
         const uniqueOwnerStats = humanReadableOwners.reduce((acc, owner) => {
             if (!acc[owner.address]) {
-                acc[owner.address] = 0;
+                acc[owner.address] = BigInt(0);
             }
-            acc[owner.address] += owner.balance; // Ensure summation uses decimals
+            acc[owner.address] += BigInt(owner.balanceRaw);
             return acc;
         }, {});
 
         const uniqueOwnerStatsArray = Object.entries(uniqueOwnerStats).map(([address, balance]) => ({
             owner: address,
-            tokensCount: balance.toFixed(decimals), // Format to decimals for consistency
+            tokensCount: (balance / BigInt(10 ** decimals)).toString(), // Convert to human-readable format
         }));
 
-        uniqueOwnerStatsArray.sort((a, b) => b.tokensCount - a.tokensCount); // Sort descending by tokensCount
+        uniqueOwnerStatsArray.sort((a, b) => BigInt(b.tokensCount) - BigInt(a.tokensCount)); // Sort descending by tokensCount
 
         // Randomly select winners
         const shuffled = humanReadableOwners.sort(() => 0.5 - Math.random());
-        const winners = shuffled.slice(0, numberOfWinners).map(winner => ({
-            address: winner.address,
-            balance: winner.balance.toFixed(decimals), // Ensure winners have decimal balances
-        }));
+        const winners = shuffled.slice(0, numberOfWinners);
 
         // Generate CSV string for all token owners
-        const csvString = await generateCsv(
-            humanReadableOwners.map(owner => ({
-                address: owner.address,
-                balance: owner.balance.toFixed(decimals), // Ensure CSV includes decimal balances
-            }))
-        );
+        const csvString = await generateCsv(humanReadableOwners);
 
         // Respond with the snapshot including unique owner stats
         res.json({
             token,
             decimals,
             totalOwners: esdtOwners.length,
-            uniqueOwnerStats: uniqueOwnerStatsArray, // Include unique owner stats with decimals
+            uniqueOwnerStats: uniqueOwnerStatsArray, // Include unique owner stats here
             winners,
             csvString,
             message: `${numberOfWinners} winners have been selected from the token "${token}".`,
