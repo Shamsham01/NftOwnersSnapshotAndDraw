@@ -630,9 +630,6 @@ app.post('/esdtSnapshotDraw', checkToken, async (req, res) => {
             tokensCount: (balance / BigInt(10 ** decimals)).toString(), // Convert to human-readable format
         }));
 
-        // Sort by tokensCount in descending order
-        uniqueOwnerStatsArray.sort((a, b) => BigInt(b.tokensCount) - BigInt(a.tokensCount));
-
         // Randomly select winners
         const shuffled = humanReadableOwners
             .map(owner => ({
