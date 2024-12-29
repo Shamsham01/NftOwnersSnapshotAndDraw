@@ -196,6 +196,7 @@ const generateUniqueOwnerStats = (data, isEsdt = false, decimals = 0) => {
 
 
 // Route for snapshotDraw
+// Route for snapshotDraw
 app.post('/snapshotDraw', checkToken, async (req, res) => {
     try {
         const { collectionTicker, numberOfWinners, includeSmartContracts, traitType, traitValue, fileNamesList } = req.body;
@@ -234,20 +235,34 @@ app.post('/snapshotDraw', checkToken, async (req, res) => {
             metadataFileName: winner.metadataFileName,
         }));
 
-        // Generate unique owner stats for NFTs
-        const uniqueOwnerStats = generateUniqueOwnerStats(filteredAddresses);
+        // Generate unique owner stats
+        const uniqueOwnerStats = filteredAddresses.reduce((stats, item) => {
+            if (!stats[item.owner]) {
+                stats[item.owner] = 0;
+            }
+            stats[item.owner] += 1; // Increment the count for each NFT owned
+            return stats;
+        }, {});
 
-        // Generate CSV string for all NFT owners
+        const uniqueOwnerStatsArray = Object.entries(uniqueOwnerStats).map(([owner, tokensCount]) => ({
+            owner,
+            tokensCount,
+        }));
+
+        uniqueOwnerStatsArray.sort((a, b) => b.tokensCount - a.tokensCount); // Sort descending by token count
+
+        // Generate CSV string for all NFT owners including attributes
         const csvString = await generateCsv(filteredAddresses.map(address => ({
             address: address.owner,
             identifier: address.identifier,
             metadataFileName: address.metadataFileName,
+            attributes: address.attributes ? JSON.stringify(address.attributes) : '', // Include attributes
         })));
 
         // Respond with the full NFT snapshot, winners, and unique stats
         res.json({
             winners,
-            uniqueOwnerStats, // Include unique owner stats here
+            uniqueOwnerStats: uniqueOwnerStatsArray, // Include unique owner stats here
             message: `${numberOfWinners} winners have been selected from collection ${collectionTicker}.`,
             csvString, // Returning the CSV string of all NFTs considered in the draw
         });
@@ -256,6 +271,7 @@ app.post('/snapshotDraw', checkToken, async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 });
+
 
 // Throttle configuration: 2 requests per second
 const throttle = pThrottle({
