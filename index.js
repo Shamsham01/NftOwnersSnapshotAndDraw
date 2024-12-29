@@ -172,25 +172,28 @@ const generateCsv = async (data) => {
 };
 
 // Function to generate unique owner stats
-const generateUniqueOwnerStats = (data) => {
+const generateUniqueOwnerStats = (data, isEsdt = false, decimals = 0) => {
     const stats = {};
 
-    // Iterate through all entries and aggregate the balances
     data.forEach(({ address, balance }) => {
+        const formattedBalance = isEsdt
+            ? parseFloat((Number(balance || 0) / 10 ** decimals).toFixed(decimals)) // Format ESDT balances
+            : 1; // For NFTs, each token contributes 1 to the owner's count
+
         if (!stats[address]) {
             stats[address] = 0;
         }
-        stats[address] += parseInt(balance, 10); // Ensure balance is treated as a number
+        stats[address] += formattedBalance;
     });
 
-    // Convert the stats object into an array of owner statistics and sort by count
     return Object.entries(stats)
         .map(([address, count]) => ({
             owner: address,
-            tokensCount: count,
+            tokensCount: isEsdt ? count.toFixed(decimals) : count, // Format for ESDT, raw count for NFTs
         }))
-        .sort((a, b) => b.tokensCount - a.tokensCount); // Sort by tokensCount descending
+        .sort((a, b) => parseFloat(b.tokensCount) - parseFloat(a.tokensCount)); // Sort descending
 };
+
 
 // Route for snapshotDraw
 app.post('/snapshotDraw', checkToken, async (req, res) => {
@@ -198,50 +201,48 @@ app.post('/snapshotDraw', checkToken, async (req, res) => {
         const { collectionTicker, numberOfWinners, includeSmartContracts, traitType, traitValue, fileNamesList } = req.body;
 
         // Fetch NFT owners
-        let addresses = await fetchNftOwners(collectionTicker, includeSmartContracts);
+        const addresses = await fetchNftOwners(collectionTicker, includeSmartContracts);
         if (addresses.length === 0) {
             return res.status(404).json({ error: 'No addresses found' });
         }
 
         // Filter by traitType and traitValue if provided
+        let filteredAddresses = addresses;
         if (traitType && traitValue) {
-            addresses = addresses.filter((item) =>
+            filteredAddresses = filteredAddresses.filter((item) =>
                 Array.isArray(item.attributes) &&
-                item.attributes.some(attribute => {
-                    return attribute.trait_type === traitType && attribute.value === traitValue;
-                })
+                item.attributes.some(attribute => attribute.trait_type === traitType && attribute.value === traitValue)
             );
         }
 
         // Filter by fileNamesList if provided
         if (fileNamesList && fileNamesList.length > 0) {
-            addresses = addresses.filter((item) =>
+            filteredAddresses = filteredAddresses.filter((item) =>
                 fileNamesList.includes(item.metadataFileName)
             );
         }
 
-        if (addresses.length === 0) {
+        if (filteredAddresses.length === 0) {
             return res.status(404).json({ error: 'No NFTs found matching the criteria' });
         }
 
         // Select random winners
-        const winners = [];
-        const shuffled = addresses.sort(() => 0.5 - Math.random());
-        const selected = shuffled.slice(0, numberOfWinners);
+        const shuffled = filteredAddresses.sort(() => 0.5 - Math.random());
+        const winners = shuffled.slice(0, numberOfWinners).map(winner => ({
+            owner: winner.owner,
+            identifier: winner.identifier,
+            metadataFileName: winner.metadataFileName,
+        }));
 
-        selected.forEach((winner) => {
-            winners.push({
-                owner: winner.owner,
-                identifier: winner.identifier,
-                metadataFileName: winner.metadataFileName,
-            });
-        });
-
-        // Generate unique owner stats
-        const uniqueOwnerStats = generateUniqueOwnerStats(addresses);
+        // Generate unique owner stats for NFTs
+        const uniqueOwnerStats = generateUniqueOwnerStats(filteredAddresses);
 
         // Generate CSV string for all NFT owners
-        const csvString = await generateCsv(addresses);
+        const csvString = await generateCsv(filteredAddresses.map(address => ({
+            address: address.owner,
+            identifier: address.identifier,
+            metadataFileName: address.metadataFileName,
+        })));
 
         // Respond with the full NFT snapshot, winners, and unique stats
         res.json({
@@ -255,7 +256,6 @@ app.post('/snapshotDraw', checkToken, async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 });
-
 
 // Throttle configuration: 2 requests per second
 const throttle = pThrottle({
@@ -599,55 +599,39 @@ app.post('/esdtSnapshotDraw', checkToken, async (req, res) => {
             return res.status(400).json({ error: 'Missing required parameters: token, numberOfWinners' });
         }
 
-        // Fetch token details to get decimals
         const tokenDetails = await fetchTokenDetails(token);
         const decimals = tokenDetails.decimals || 0;
 
-        // Fetch token owners
         const esdtOwners = await fetchEsdtOwners(token, includeSmartContracts);
-
         if (esdtOwners.length === 0) {
             return res.status(404).json({ error: 'No owners found for the specified token.' });
         }
 
-        // Format balances using decimals
         const formattedOwners = esdtOwners.map(owner => ({
             address: owner.address,
-            balance: (Number(BigInt(owner.balanceRaw || 0)) / 10 ** decimals).toFixed(decimals), // Convert BigInt to Number and format
+            balance: BigInt(owner.balanceRaw || 0),
         }));
 
-        // Generate unique owner stats with formatted balances
-        const uniqueOwnerStats = formattedOwners.reduce((acc, owner) => {
-            if (!acc[owner.address]) {
-                acc[owner.address] = 0;
-            }
-            acc[owner.address] += parseFloat(owner.balance); // Accumulate formatted balance
-            return acc;
-        }, {});
+        const uniqueOwnerStats = generateUniqueOwnerStats(formattedOwners, true, decimals);
 
-        const uniqueOwnerStatsArray = Object.entries(uniqueOwnerStats).map(([address, balance]) => ({
-            owner: address,
-            tokensCount: balance.toFixed(decimals), // Ensure consistent decimal format
-        }));
-
-        uniqueOwnerStatsArray.sort((a, b) => parseFloat(b.tokensCount) - parseFloat(a.tokensCount)); // Sort descending
-
-        // Randomly select winners from formatted owners
-        const shuffled = formattedOwners.sort(() => 0.5 - Math.random());
+        const shuffled = formattedOwners
+            .map(owner => ({
+                ...owner,
+                balance: (Number(owner.balance) / 10 ** decimals).toFixed(decimals),
+            }))
+            .sort(() => 0.5 - Math.random());
         const winners = shuffled.slice(0, numberOfWinners);
 
-        // Generate CSV string with formatted balances
         const csvString = await generateCsv(formattedOwners.map(owner => ({
             address: owner.address,
-            balance: owner.balance, // Include formatted balance in CSV
+            balance: (Number(owner.balance) / 10 ** decimals).toFixed(decimals),
         })));
 
-        // Respond with the formatted data
         res.json({
             token,
             decimals,
             totalOwners: esdtOwners.length,
-            uniqueOwnerStats: uniqueOwnerStatsArray, // Include formatted stats
+            uniqueOwnerStats,
             winners,
             csvString,
             message: `${numberOfWinners} winners have been selected from the token "${token}".`,
@@ -657,7 +641,6 @@ app.post('/esdtSnapshotDraw', checkToken, async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 });
-
 
 // Start the server
 app.listen(PORT, () => {
