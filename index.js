@@ -608,14 +608,27 @@ app.post('/esdtSnapshotDraw', checkToken, async (req, res) => {
             return res.status(404).json({ error: 'No owners found for the specified token.' });
         }
 
-        // Convert balances to human-readable format
+        // Convert balances to human-readable decimal format
         const humanReadableOwners = esdtOwners.map(owner => ({
             address: owner.address,
-            balance: (BigInt(owner.balance) / BigInt(10 ** decimals)).toString(), // Convert to decimal format
+            balance: parseFloat((BigInt(owner.balance) / BigInt(10 ** decimals)).toString()), // Convert to decimal
         }));
 
-        // Generate unique owner stats with balances in decimal format
-        const uniqueOwnerStats = generateUniqueOwnerStats(humanReadableOwners);
+        // Generate unique owner stats with decimal balances
+        const uniqueOwnerStats = humanReadableOwners.reduce((acc, owner) => {
+            if (!acc[owner.address]) {
+                acc[owner.address] = 0;
+            }
+            acc[owner.address] += owner.balance;
+            return acc;
+        }, {});
+
+        const uniqueOwnerStatsArray = Object.entries(uniqueOwnerStats).map(([address, balance]) => ({
+            owner: address,
+            tokensCount: balance,
+        }));
+
+        uniqueOwnerStatsArray.sort((a, b) => b.tokensCount - a.tokensCount); // Sort descending by tokensCount
 
         // Randomly select winners
         const shuffled = humanReadableOwners.sort(() => 0.5 - Math.random());
@@ -629,7 +642,7 @@ app.post('/esdtSnapshotDraw', checkToken, async (req, res) => {
             token,
             decimals,
             totalOwners: esdtOwners.length,
-            uniqueOwnerStats, // Include unique owner stats here
+            uniqueOwnerStats: uniqueOwnerStatsArray, // Include unique owner stats here
             winners,
             csvString,
             message: `${numberOfWinners} winners have been selected from the token "${token}".`,
@@ -638,7 +651,12 @@ app.post('/esdtSnapshotDraw', checkToken, async (req, res) => {
         console.error('Error during esdtSnapshotDraw:', error);
         res.status(500).json({ error: error.message });
     }
+
+  uniqueOwnerStatsArray.sort((a, b) => b.tokensCount - a.tokensCount); // Sort descending by tokensCount
 });
+
+
+
 
 // Start the server
 app.listen(PORT, () => {
