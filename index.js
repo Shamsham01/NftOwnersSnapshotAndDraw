@@ -512,6 +512,28 @@ const fetchSftOwners = async (collectionTicker, editions, includeSmartContracts)
     }
 };
 
+// Helper function for fetch with retry logic and exponential backoff
+const fetchWithRetry = async (url, retries = 3) => {
+    for (let attempt = 1; attempt <= retries; attempt++) {
+        try {
+            const response = await fetch(url);
+            if (!response.ok) {
+                throw new Error(`HTTP Error ${response.status}`);
+            }
+            return await response.json();
+        } catch (error) {
+            if (attempt < retries && error.message.includes("HTTP Error 429")) {
+                console.warn(`Rate limit hit. Retrying in ${2 ** attempt} seconds... (Attempt ${attempt})`);
+                await new Promise(resolve => setTimeout(resolve, 1000 * 2 ** attempt)); // Exponential backoff
+            } else {
+                console.error(`Failed after ${attempt} attempts:`, error.message);
+                throw error;
+            }
+        }
+    }
+    throw new Error("Exceeded maximum retry attempts");
+};
+
 // Helper function to fetch ESDT owners
 const fetchEsdtOwners = async (token, includeSmartContracts) => {
     const owners = new Map();
@@ -520,11 +542,6 @@ const fetchEsdtOwners = async (token, includeSmartContracts) => {
 
     try {
         while (true) {
-            if (from + size > 10000) {
-                console.warn('Reached API result window limit of 10,000. Restarting from 0.');
-                from = 0; // Reset and adjust logic to avoid exceeding API limits
-            }
-
             const url = `${apiProvider.mainnet}/tokens/${token}/accounts?size=${size}&from=${from}`;
             const data = await fetchWithRetry(url);
 
