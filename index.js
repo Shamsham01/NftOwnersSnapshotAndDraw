@@ -610,18 +610,20 @@ app.post('/esdtSnapshotDraw', checkToken, async (req, res) => {
             return res.status(404).json({ error: 'No owners found for the specified token.' });
         }
 
-        // Convert balances to human-readable decimal format without losing precision
-        const humanReadableOwners = esdtOwners.map(owner => ({
-            address: owner.address,
-            balance: (BigInt(owner.balanceRaw) / BigInt(10 ** decimals)).toString(), // Keep precision by using BigInt
-        }));
+        // Convert balances to human-readable decimal format, validating `balanceRaw`
+        const humanReadableOwners = esdtOwners
+            .filter(owner => owner.balanceRaw !== undefined) // Exclude undefined balances
+            .map(owner => ({
+                address: owner.address,
+                balance: (BigInt(owner.balanceRaw || 0) / BigInt(10 ** decimals)).toString(), // Safely handle undefined
+            }));
 
-        // Generate unique owner stats
+        // Generate unique owner stats, handling undefined balances
         const uniqueOwnerStats = humanReadableOwners.reduce((acc, owner) => {
             if (!acc[owner.address]) {
                 acc[owner.address] = BigInt(0);
             }
-            acc[owner.address] += BigInt(owner.balanceRaw);
+            acc[owner.address] += BigInt(owner.balance || 0); // Safely add balance
             return acc;
         }, {});
 
