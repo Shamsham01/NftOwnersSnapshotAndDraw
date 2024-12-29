@@ -651,12 +651,7 @@ app.post('/esdtSnapshotDraw', checkToken, async (req, res) => {
         console.error('Error during esdtSnapshotDraw:', error);
         res.status(500).json({ error: error.message });
     }
-
-  uniqueOwnerStatsArray.sort((a, b) => b.tokensCount - a.tokensCount); // Sort descending by tokensCount
 });
-
-
-
 
 // Start the server
 app.listen(PORT, () => {
