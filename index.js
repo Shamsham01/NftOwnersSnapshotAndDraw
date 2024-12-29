@@ -571,7 +571,7 @@ const fetchTokenDetails = async (token) => {
     }
 };
 
-// Endpoint for ESDT Snapshot Draw
+// Updated endpoint for ESDT Snapshot Draw
 app.post('/esdtSnapshotDraw', checkToken, async (req, res) => {
     try {
         const { token, includeSmartContracts, numberOfWinners } = req.body;
@@ -597,6 +597,9 @@ app.post('/esdtSnapshotDraw', checkToken, async (req, res) => {
             balance: (BigInt(owner.balance) / BigInt(10 ** decimals)).toString(), // Convert to human-readable
         }));
 
+        // Generate unique owner stats
+        const uniqueOwnerStats = generateUniqueOwnerStats(humanReadableOwners);
+
         // Randomly select winners
         const shuffled = humanReadableOwners.sort(() => 0.5 - Math.random());
         const winners = shuffled.slice(0, numberOfWinners);
@@ -604,11 +607,12 @@ app.post('/esdtSnapshotDraw', checkToken, async (req, res) => {
         // Generate CSV string for all token owners
         const csvString = await generateCsv(humanReadableOwners);
 
-        // Respond with the snapshot
+        // Respond with the snapshot including unique owner stats
         res.json({
             token,
             decimals,
             totalOwners: esdtOwners.length,
+            uniqueOwnerStats, // Include unique owner stats here
             winners,
             csvString,
             message: `${numberOfWinners} winners have been selected from the token "${token}".`,
@@ -618,29 +622,6 @@ app.post('/esdtSnapshotDraw', checkToken, async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 });
-
-// Helper function for fetch with retry logic and exponential backoff
-const fetchWithRetry = async (url, retries = 10) => {
-    for (let attempt = 1; attempt <= retries; attempt++) {
-        try {
-            const response = await fetch(url);
-            if (!response.ok) {
-                throw new Error(`HTTP Error ${response.status}`);
-            }
-            return await response.json();
-        } catch (error) {
-            if (attempt < retries && error.message.includes("HTTP Error 429")) {
-                console.warn(`Rate limit hit. Retrying in ${2 ** attempt} seconds... (Attempt ${attempt})`);
-                await new Promise(resolve => setTimeout(resolve, 1000 * 2 ** attempt)); // Exponential backoff
-            } else {
-                console.error(`Failed after ${attempt} attempts:`, error.message);
-                throw error;
-            }
-        }
-    }
-    throw new Error("Exceeded maximum retry attempts");
-};
-
 
 // Start the server
 app.listen(PORT, () => {
