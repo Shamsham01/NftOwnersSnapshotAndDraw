@@ -611,10 +611,10 @@ app.post('/esdtSnapshotDraw', checkToken, async (req, res) => {
         // Convert balances to human-readable format
         const humanReadableOwners = esdtOwners.map(owner => ({
             address: owner.address,
-            balance: (BigInt(owner.balance) / BigInt(10 ** decimals)).toString(), // Convert to human-readable
+            balance: (BigInt(owner.balance) / BigInt(10 ** decimals)).toString(), // Convert to decimal format
         }));
 
-        // Generate unique owner stats
+        // Generate unique owner stats with balances in decimal format
         const uniqueOwnerStats = generateUniqueOwnerStats(humanReadableOwners);
 
         // Randomly select winners
@@ -639,6 +639,7 @@ app.post('/esdtSnapshotDraw', checkToken, async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 });
+
 
 // Start the server
 app.listen(PORT, () => {
