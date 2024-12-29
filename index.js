@@ -619,30 +619,38 @@ app.post('/esdtSnapshotDraw', checkToken, async (req, res) => {
             if (!acc[owner.address]) {
                 acc[owner.address] = 0;
             }
-            acc[owner.address] += owner.balance;
+            acc[owner.address] += owner.balance; // Ensure summation uses decimals
             return acc;
         }, {});
 
         const uniqueOwnerStatsArray = Object.entries(uniqueOwnerStats).map(([address, balance]) => ({
             owner: address,
-            tokensCount: balance,
+            tokensCount: balance.toFixed(decimals), // Format to decimals for consistency
         }));
 
         uniqueOwnerStatsArray.sort((a, b) => b.tokensCount - a.tokensCount); // Sort descending by tokensCount
 
         // Randomly select winners
         const shuffled = humanReadableOwners.sort(() => 0.5 - Math.random());
-        const winners = shuffled.slice(0, numberOfWinners);
+        const winners = shuffled.slice(0, numberOfWinners).map(winner => ({
+            address: winner.address,
+            balance: winner.balance.toFixed(decimals), // Ensure winners have decimal balances
+        }));
 
         // Generate CSV string for all token owners
-        const csvString = await generateCsv(humanReadableOwners);
+        const csvString = await generateCsv(
+            humanReadableOwners.map(owner => ({
+                address: owner.address,
+                balance: owner.balance.toFixed(decimals), // Ensure CSV includes decimal balances
+            }))
+        );
 
         // Respond with the snapshot including unique owner stats
         res.json({
             token,
             decimals,
             totalOwners: esdtOwners.length,
-            uniqueOwnerStats: uniqueOwnerStatsArray, // Include unique owner stats here
+            uniqueOwnerStats: uniqueOwnerStatsArray, // Include unique owner stats with decimals
             winners,
             csvString,
             message: `${numberOfWinners} winners have been selected from the token "${token}".`,
@@ -652,6 +660,7 @@ app.post('/esdtSnapshotDraw', checkToken, async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 });
+
 
 // Start the server
 app.listen(PORT, () => {
