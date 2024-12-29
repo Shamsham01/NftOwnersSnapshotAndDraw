@@ -553,7 +553,7 @@ const fetchEsdtOwners = async (token, includeSmartContracts) => {
                 if (includeSmartContracts || !isSmartContractAddress(owner.address)) {
                     owners.set(owner.address, {
                         address: owner.address,
-                        balance: owner.balance,
+                        balance: owner.balance, // Keep raw balance for later conversion
                     });
                 }
             });
@@ -639,7 +639,6 @@ app.post('/esdtSnapshotDraw', checkToken, async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 });
-
 
 // Start the server
 app.listen(PORT, () => {
