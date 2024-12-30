@@ -606,57 +606,82 @@ const fetchTokenDetails = async (token) => {
     }
 };
 
-// Updated endpoint for ESDT Snapshot Draw (returning raw chain data)
-app.post('/esdtSnapshotDraw', checkToken, async (req, res) => {
+// Route for snapshotDraw
+app.post('/snapshotDraw', checkToken, async (req, res) => {
     try {
-        const { token, includeSmartContracts, numberOfWinners } = req.body;
+        const { collectionTicker, numberOfWinners, includeSmartContracts, traitType, traitValue, fileNamesList } = req.body;
 
-        if (!token || !numberOfWinners) {
-            return res.status(400).json({ error: 'Missing required parameters: token, numberOfWinners' });
+        // Fetch NFT owners
+        const addresses = await fetchNftOwners(collectionTicker, includeSmartContracts);
+        if (addresses.length === 0) {
+            return res.status(404).json({ error: 'No addresses found' });
         }
 
-        const tokenDetails = await fetchTokenDetails(token);
-        const decimals = tokenDetails.decimals || 0;
-
-        const esdtOwners = await fetchEsdtOwners(token, includeSmartContracts);
-        if (esdtOwners.length === 0) {
-            return res.status(404).json({ error: 'No owners found for the specified token.' });
+        // Filter by traitType and traitValue if provided
+        let filteredAddresses = addresses;
+        if (traitType && traitValue) {
+            filteredAddresses = filteredAddresses.filter((item) =>
+                Array.isArray(item.attributes) &&
+                item.attributes.some(attribute => attribute.trait_type === traitType && attribute.value === traitValue)
+            );
         }
 
-        const formattedOwners = esdtOwners.map(owner => ({
-            address: owner.address,
-            balance: BigInt(owner.balanceRaw || 0),
+        // Filter by fileNamesList if provided
+        if (fileNamesList && fileNamesList.length > 0) {
+            filteredAddresses = filteredAddresses.filter((item) =>
+                fileNamesList.includes(item.metadataFileName)
+            );
+        }
+
+        if (filteredAddresses.length === 0) {
+            return res.status(404).json({ error: 'No NFTs found matching the criteria' });
+        }
+
+        // Select random winners
+        const shuffled = filteredAddresses.sort(() => 0.5 - Math.random());
+        const winners = shuffled.slice(0, numberOfWinners).map(winner => ({
+            owner: winner.owner,
+            identifier: winner.identifier,
+            metadataFileName: winner.metadataFileName,
         }));
 
-        const uniqueOwnerStats = generateUniqueOwnerStats(formattedOwners, true, decimals);
+        // Generate unique owner stats
+        const uniqueOwnerStats = filteredAddresses.reduce((stats, item) => {
+            if (!stats[item.owner]) {
+                stats[item.owner] = 0;
+            }
+            stats[item.owner] += 1; // Increment the count for each NFT owned
+            return stats;
+        }, {});
 
-        const shuffled = formattedOwners
-            .map(owner => ({
-                ...owner,
-                balance: (Number(owner.balance) / 10 ** decimals).toFixed(decimals),
-            }))
-            .sort(() => 0.5 - Math.random());
-        const winners = shuffled.slice(0, numberOfWinners);
+        const uniqueOwnerStatsArray = Object.entries(uniqueOwnerStats).map(([owner, tokensCount]) => ({
+            owner,
+            tokensCount,
+        }));
 
-        const csvString = await generateCsv(formattedOwners.map(owner => ({
-            address: owner.address,
-            balance: (Number(owner.balance) / 10 ** decimals).toFixed(decimals),
+        uniqueOwnerStatsArray.sort((a, b) => b.tokensCount - a.tokensCount); // Sort descending by token count
+
+        // Generate CSV string for all NFT owners including attributes
+        const csvString = await generateCsv(filteredAddresses.map(address => ({
+            address: address.owner,
+            identifier: address.identifier,
+            metadataFileName: address.metadataFileName,
+            attributes: address.attributes ? JSON.stringify(address.attributes) : '', // Include attributes
         })));
 
+        // Respond with the full NFT snapshot, winners, and unique stats
         res.json({
-            token,
-            decimals,
-            totalOwners: esdtOwners.length,
-            uniqueOwnerStats,
             winners,
-            csvString,
-            message: `${numberOfWinners} winners have been selected from the token "${token}".`,
+            uniqueOwnerStats: uniqueOwnerStatsArray, // Include unique owner stats here
+            message: `${numberOfWinners} winners have been selected from collection ${collectionTicker}.`,
+            csvString, // Returning the CSV string of all NFTs considered in the draw
         });
     } catch (error) {
-        console.error('Error during esdtSnapshotDraw:', error);
+        console.error('Error during snapshotDraw:', error);
         res.status(500).json({ error: error.message });
     }
 });
+
 
 // Start the server
 app.listen(PORT, () => {
