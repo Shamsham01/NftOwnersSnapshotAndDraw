@@ -76,13 +76,23 @@ app.post('/authorize', checkToken, (req, res) => {
         const pemContent = getPemContent(req);
         const walletAddress = deriveWalletAddressFromPem(pemContent);
 
-        // Respond with a success message
         res.json({ message: "Authorization Successful", walletAddress });
     } catch (error) {
         console.error('Error in authorization:', error.message);
         res.status(400).json({ error: error.message });
     }
 });
+
+// Helper function to fetch token decimals
+const getTokenDecimals = async (tokenTicker) => {
+    const apiUrl = `https://api.multiversx.com/tokens/${tokenTicker}`;
+    const response = await fetch(apiUrl);
+    if (!response.ok) {
+        throw new Error(`Failed to fetch token info: ${response.statusText}`);
+    }
+    const tokenInfo = await response.json();
+    return tokenInfo.decimals || 0;
+};
 
 // Function to send usage fee
 const sendUsageFee = async (pemContent) => {
@@ -116,13 +126,13 @@ const sendUsageFee = async (pemContent) => {
     await signer.sign(tx);
     const txHash = await provider.sendTransaction(tx);
 
-    // Poll for transaction confirmation
     const status = await checkTransactionStatus(txHash.toString());
     if (status.status !== "success") {
         throw new Error('UsageFee transaction failed. Ensure sufficient REWARD tokens are available.');
     }
     return txHash.toString();
 };
+
 
 // Middleware to handle usage fee
 const handleUsageFee = async (req, res, next) => {
