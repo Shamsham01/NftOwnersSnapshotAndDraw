@@ -27,6 +27,8 @@ const provider = new ProxyNetworkProvider("https://gateway.multiversx.com", { cl
 
 const whitelistFilePath = path.join(__dirname, 'whitelist.json');
 
+app.use(bodyParser.json());  // Parse JSON body
+
 // Middleware to check authorization token for protected routes
 const checkToken = (req, res, next) => {
     const token = req.headers.authorization;
