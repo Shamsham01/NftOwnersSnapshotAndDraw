@@ -1,4 +1,4 @@
-import { Address, TransactionsFactoryConfig, TransferTransactionsFactory, TokenTransfer } from '@multiversx/sdk-core';
+import { Address, TransactionsFactoryConfig, TransferTransactionsFactory, TokenTransfer, Token } from '@multiversx/sdk-core';
 import fetch from 'node-fetch';
 import ora from 'ora';
 import pThrottle from 'p-throttle';
