@@ -1,4 +1,4 @@
-import { Address } from '@multiversx/sdk-core';
+import { Address, TransactionsFactoryConfig, TransferTransactionsFactory } from '@multiversx/sdk-core';
 import fetch from 'node-fetch';
 import ora from 'ora';
 import pThrottle from 'p-throttle';
@@ -6,7 +6,6 @@ import express from 'express';
 import bodyParser from 'body-parser';
 import { ProxyNetworkProvider } from '@multiversx/sdk-network-providers';
 import { UserSigner } from '@multiversx/sdk-wallet';
-import { TransactionsFactoryConfig } from '@multiversx/sdk-core';
 import { format as formatCsv } from 'fast-csv';
 import { Readable } from 'stream';
 import BigNumber from 'bignumber.js';
