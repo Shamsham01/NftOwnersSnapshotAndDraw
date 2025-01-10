@@ -6,6 +6,7 @@ import express from 'express';
 import bodyParser from 'body-parser';
 import { ProxyNetworkProvider } from '@multiversx/sdk-network-providers';
 import { UserSigner } from '@multiversx/sdk-wallet';
+import { TransactionsFactoryConfig } from '@multiversx/sdk-core';
 import { format as formatCsv } from 'fast-csv';
 import { Readable } from 'stream';
 import BigNumber from 'bignumber.js';
