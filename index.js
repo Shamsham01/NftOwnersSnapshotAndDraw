@@ -8,18 +8,19 @@ import { ProxyNetworkProvider } from '@multiversx/sdk-network-providers';
 import { UserSigner } from '@multiversx/sdk-wallet';
 import { format as formatCsv } from 'fast-csv';
 import { Readable } from 'stream';
+import BigNumber from 'bignumber.js';
+import fs from 'fs';
+import path from 'path';
 
 const app = express();
 const PORT = process.env.PORT || 10000;
 const SECURE_TOKEN = process.env.SECURE_TOKEN;  // Secure Token for authorization
-const MAX_SIZE = 100;
-const RETRY_LIMIT = 3;  // Retry limit for API requests
-const apiProvider = {
-  mainnet: 'https://api.multiversx.com',
-  devnet: 'https://devnet-api.multiversx.com',
-};  // Change based on network
+const USAGE_FEE = 100; // Fee in REWARD tokens
+const REWARD_TOKEN = "REWARD-cf6eac"; // Token identifier
+const TREASURY_WALLET = "erd158k2c3aserjmwnyxzpln24xukl2fsvlk9x46xae4dxl5xds79g6sdz37qn"; // Treasury wallet
+const provider = new ProxyNetworkProvider("https://gateway.multiversx.com", { clientName: "javascript-api" });
 
-app.use(bodyParser.json());  // Support JSON-encoded bodies
+const whitelistFilePath = path.join(__dirname, 'whitelist.json');
 
 // Middleware to check authorization token for protected routes
 const checkToken = (req, res, next) => {
@@ -31,176 +32,117 @@ const checkToken = (req, res, next) => {
     }
 };
 
-// New Authorization Endpoint for Make.com to verify connection
-app.post('/authorization', (req, res) => {
+// Function to validate and return the PEM content from the request body
+const getPemContent = (req) => {
+    const pemContent = req.body.walletPem;
+    if (!pemContent || typeof pemContent !== 'string' || !pemContent.includes('-----BEGIN PRIVATE KEY-----')) {
+        throw new Error('Invalid PEM content');
+    }
+    return pemContent;
+};
+
+// Helper to derive wallet address from PEM
+const deriveWalletAddressFromPem = (pemContent) => {
+    const signer = UserSigner.fromPem(pemContent);
+    return signer.getAddress().toString();
+};
+
+// Load the whitelist file
+const loadWhitelist = () => {
+    if (!fs.existsSync(whitelistFilePath)) {
+        fs.writeFileSync(whitelistFilePath, JSON.stringify([], null, 2));
+    }
+    const data = fs.readFileSync(whitelistFilePath);
+    return JSON.parse(data);
+};
+
+// Check if a wallet is whitelisted
+const isWhitelisted = (walletAddress) => {
+    const whitelist = loadWhitelist();
+    return whitelist.some(entry => entry.walletAddress === walletAddress);
+};
+
+// Update `/execute/authorize` endpoint
+app.post('/execute/authorize', checkToken, (req, res) => {
     try {
-        const token = req.headers.authorization;
-        if (token === `Bearer ${SECURE_TOKEN}`) {
-            res.json({ message: "Authorization successful" });
-        } else {
-            res.status(401).json({ error: "Unauthorized" });
-        }
+        const pemContent = getPemContent(req);
+        const walletAddress = deriveWalletAddressFromPem(pemContent);
+
+        // Respond with a success message
+        res.json({ message: "Authorization Successful", walletAddress });
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        console.error('Error in authorization:', error.message);
+        res.status(400).json({ error: error.message });
     }
 });
 
-// Helper function to detect if the address is a Smart Contract
-const isSmartContractAddress = (address) => {
-    return address.startsWith('erd1qqqqqqqqqqqqq');
-};
+// Function to send usage fee
+const sendUsageFee = async (pemContent) => {
+    const signer = UserSigner.fromPem(pemContent);
+    const senderAddress = signer.getAddress();
+    const receiverAddress = new Address(TREASURY_WALLET);
 
-// Helper function to fetch NFT owners with retries and error handling
-const fetchNftOwners = async (collectionTicker, includeSmartContracts) => {
-    let tokensNumber = '0';
-    const addressesArr = [];
+    const accountOnNetwork = await provider.getAccount(senderAddress);
+    const nonce = accountOnNetwork.nonce;
 
-    const response = await fetch(
-        `${apiProvider.mainnet}/collections/${collectionTicker}/nfts/count`
-    );
-    tokensNumber = await response.text();
+    const decimals = await getTokenDecimals(REWARD_TOKEN);
+    const convertedAmount = convertAmountToBlockchainValue(USAGE_FEE, decimals);
 
-    const makeCalls = () =>
-        new Promise((resolve) => {
-            const repeats = Math.ceil(Number(tokensNumber) / MAX_SIZE);
-            const throttle = pThrottle({
-                limit: 2,      // 2 requests per second (per MultiversX API limit)
-                interval: 1000 // 1000 ms (1 second)
-            });
+    const factoryConfig = new TransactionsFactoryConfig({ chainID: "1" });
+    const factory = new TransferTransactionsFactory({ config: factoryConfig });
 
-            let madeRequests = 0;
+    const tx = factory.createTransactionForESDTTokenTransfer({
+        sender: senderAddress,
+        receiver: receiverAddress,
+        tokenTransfers: [
+            new TokenTransfer({
+                token: new Token({ identifier: REWARD_TOKEN }),
+                amount: BigInt(convertedAmount),
+            }),
+        ],
+    });
 
-            const throttled = throttle(async (index, retries = 0) => {
-                try {
-                    const response = await fetch(
-                        `${apiProvider.mainnet}/collections/${collectionTicker}/nfts?withOwner=true&from=${
-                            index * MAX_SIZE
-                        }&size=${MAX_SIZE}`
-                    );
-                    
-                    if (!response.ok) throw new Error(`HTTP Error ${response.status}`);
+    tx.nonce = nonce;
+    tx.gasLimit = BigInt(500000);
 
-                    const contentType = response.headers.get('content-type');
-                    if (contentType && contentType.includes('application/json')) {
-                        const data = await response.json();
-                        
-                        const addrs = data.map((token) => ({
-                            owner: token.owner,
-                            identifier: token.identifier,
-                            metadataFileName: getMetadataFileName(token.attributes),  // Extract metadata file name
-                            attributes: token.metadata?.attributes || []  // Save full attributes for filtering
-                        }));
+    await signer.sign(tx);
+    const txHash = await provider.sendTransaction(tx);
 
-                        addressesArr.push(addrs);
-                        madeRequests++;
-                    } else {
-                        throw new Error('Invalid response type, expected JSON');
-                    }
-
-                    if (madeRequests >= repeats) {
-                        return resolve(addressesArr.flat());
-                    }
-
-                } catch (error) {
-                    if (retries < RETRY_LIMIT) {
-                        console.error(`Retrying request (attempt ${retries + 1}) for batch ${index}: ${error.message}`);
-                        await throttled(index, retries + 1);  // Retry
-                    } else {
-                        console.error(`Failed after ${RETRY_LIMIT} attempts for batch ${index}: ${error.message}`);
-                    }
-                }
-            });
-
-            for (let step = 0; step < repeats; step++) {
-                throttled(step);
-            }
-        });
-
-    let addresses = await makeCalls();
-
-    if (!includeSmartContracts) {
-        addresses = addresses.filter(
-            (addrObj) => 
-                typeof addrObj.owner === 'string' && !isSmartContractAddress(addrObj.owner)
-        );
+    // Poll for transaction confirmation
+    const status = await checkTransactionStatus(txHash.toString());
+    if (status.status !== "success") {
+        throw new Error('UsageFee transaction failed. Ensure sufficient REWARD tokens are available.');
     }
-
-    return addresses;
+    return txHash.toString();
 };
 
-// Helper function to decode metadata attributes and get the file name
-const getMetadataFileName = (attributes) => {
-    const attrsDecoded = attributes
-        ? Buffer.from(attributes, 'base64').toString()
-        : undefined;
-    if (!attrsDecoded) return '';
+// Middleware to handle usage fee
+const handleUsageFee = async (req, res, next) => {
+    try {
+        const pemContent = getPemContent(req);
+        const walletAddress = deriveWalletAddressFromPem(pemContent);
 
-    const metadataKey = attrsDecoded
-        .split(';')
-        .filter((item) => item.includes('metadata'))?.[0];
-
-    if (!metadataKey) return '';
-
-    return metadataKey.split('/')?.[1].split('.')?.[0];
-};
-
-// Function to generate CSV data as a string
-const generateCsv = async (data) => {
-    const csvData = [];
-
-    data.forEach((row) => {
-        csvData.push({
-            address: row.address || row.owner, // Use `address` for SFTs, `owner` for NFTs
-            identifier: row.identifier || '', // Include identifier if available
-            balance: row.balance || '', // Include balance if available
-            metadataFileName: row.metadataFileName || '', // Include metadata if available
-            attributes: row.attributes ? JSON.stringify(row.attributes) : '' // Store attributes as JSON string
-        });
-    });
-
-    return new Promise((resolve, reject) => {
-        const csvStream = formatCsv({ headers: true });
-        const chunks = [];
-
-        csvStream.on('data', (chunk) => chunks.push(chunk.toString()));
-        csvStream.on('end', () => resolve(chunks.join('')));
-        csvStream.on('error', reject);
-
-        csvData.forEach((row) => csvStream.write(row));
-        csvStream.end();
-    });
-};
-
-// Function to generate unique owner stats
-const generateUniqueOwnerStats = (data, isEsdt = false, decimals = 0) => {
-    const stats = {};
-
-    data.forEach(({ address, balance }) => {
-        const formattedBalance = isEsdt
-            ? parseFloat((Number(balance || 0) / 10 ** decimals).toFixed(decimals)) // Format ESDT balances
-            : 1; // For NFTs, each token contributes 1 to the owner's count
-
-        if (!stats[address]) {
-            stats[address] = 0;
+        // Check if the wallet is whitelisted
+        if (isWhitelisted(walletAddress)) {
+            console.log(`Wallet ${walletAddress} is whitelisted. Skipping usage fee.`);
+            next(); // Skip the usage fee and proceed
+            return;
         }
-        stats[address] += formattedBalance;
-    });
 
-    return Object.entries(stats)
-        .map(([address, count]) => ({
-            owner: address,
-            tokensCount: isEsdt ? count.toFixed(decimals) : count, // Format for ESDT, raw count for NFTs
-        }))
-        .sort((a, b) => parseFloat(b.tokensCount) - parseFloat(a.tokensCount)); // Sort descending
+        const txHash = await sendUsageFee(pemContent);
+        req.usageFeeHash = txHash; // Attach transaction hash to the request
+        next();
+    } catch (error) {
+        console.error('Error processing UsageFee:', error.message);
+        res.status(400).json({ error: error.message });
+    }
 };
-
-
-// Route for snapshotDraw
-app.post('/snapshotDraw', checkToken, async (req, res) => {
+// Example of using the handleUsageFee middleware
+app.post('/snapshotDraw', checkToken, handleUsageFee, async (req, res) => {
     try {
         const { collectionTicker, numberOfWinners, includeSmartContracts, traitType, traitValue, fileNamesList } = req.body;
 
-        // Fetch NFT owners
+        // Fetch NFT owners logic
         const addresses = await fetchNftOwners(collectionTicker, includeSmartContracts);
         if (addresses.length === 0) {
             return res.status(404).json({ error: 'No addresses found' });
@@ -250,20 +192,12 @@ app.post('/snapshotDraw', checkToken, async (req, res) => {
 
         uniqueOwnerStatsArray.sort((a, b) => b.tokensCount - a.tokensCount); // Sort descending by token count
 
-        // Generate CSV string for all NFT owners including attributes
-        const csvString = await generateCsv(filteredAddresses.map(address => ({
-            address: address.owner,
-            identifier: address.identifier,
-            metadataFileName: address.metadataFileName,
-            attributes: address.attributes ? JSON.stringify(address.attributes) : '', // Include attributes
-        })));
-
-        // Respond with the full NFT snapshot, winners, and unique stats
+        // Respond with the winners and stats
         res.json({
             winners,
-            uniqueOwnerStats: uniqueOwnerStatsArray, // Include unique owner stats here
+            uniqueOwnerStats: uniqueOwnerStatsArray,
             message: `${numberOfWinners} winners have been selected from collection ${collectionTicker}.`,
-            csvString, // Returning the CSV string of all NFTs considered in the draw
+            usageFeeHash: req.usageFeeHash,
         });
     } catch (error) {
         console.error('Error during snapshotDraw:', error);
@@ -271,223 +205,109 @@ app.post('/snapshotDraw', checkToken, async (req, res) => {
     }
 });
 
-// Throttle configuration: 2 requests per second
-const throttle = pThrottle({
-    limit: 2,      // Maximum of 4 requests
-    interval: 1000 // Per 1000 ms (1 second)
-});
+// Helper function to fetch NFT owners
+const fetchNftOwners = async (collectionTicker, includeSmartContracts) => {
+    const apiProvider = "https://api.multiversx.com";
+    let tokensNumber = '0';
+    const addressesArr = [];
 
-// Helper function to fetch data with throttling and retry logic
-const fetchDataWithRetry = async (url, retries = 3) => {
-    const fetchThrottled = throttle(async (url) => {
-        const response = await fetch(url);
-        if (!response.ok) {
-            throw new Error(`HTTP Error ${response.status}`);
-        }
-        return await response.json();
-    });
+    const response = await fetch(
+        `${apiProvider}/collections/${collectionTicker}/nfts/count`
+    );
+    tokensNumber = await response.text();
 
-    for (let attempt = 0; attempt <= retries; attempt++) {
-        try {
-            return await fetchThrottled(url);
-        } catch (error) {
-            if (attempt < retries && error.message.includes("HTTP Error 429")) {
-                console.warn(`Retrying due to rate limit... (Attempt ${attempt + 1} of ${retries})`);
-                await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second before retrying
-            } else {
-                throw error;
-            }
-        }
-    }
-    throw new Error("Failed to fetch data after retries.");
-};
+    const makeCalls = () =>
+        new Promise((resolve) => {
+            const repeats = Math.ceil(Number(tokensNumber) / 100);
+            const throttle = pThrottle({
+                limit: 2,      // 2 requests per second (per MultiversX API limit)
+                interval: 1000 // 1000 ms (1 second)
+            });
 
-// Helper function to fetch and calculate currently staked NFTs for /stakedNftsSnapshotDraw
-const fetchStakedNfts = async (collectionTicker, contractLabel) => {
-    const contractAddresses = {
-        oneDexStakedNfts: "erd1qqqqqqqqqqqqqpgqrq6gv0ljf4y9md42pe4m6mh96hcpqnpuusls97tf33",
-        xoxnoStakedNfts: "erd1qqqqqqqqqqqqqpgqvpkd3g3uwludduv3797j54qt6c888wa59w2shntt6z",
-        artCpaStakedNfts: "erd1qqqqqqqqqqqqqpgqfken0exk7jpr85dx6f8ym3jgcagesfcqkqys0xnquf",
-        hodlFounderNFTs: "erd1qqqqqqqqqqqqqpgqpvlxt3n9ks66kuq4j8cvcv25k8a5rsx99g6suw5r66",
-        // Add additional contracts here if needed
-    };
+            let madeRequests = 0;
 
-    // Define the staking function names for each contract
-    const stakingFunctions = {
-        oneDexStakedNfts: "userStake",
-        xoxnoStakedNfts: "stake",
-        artCpaStakedNfts: "userStake",
-        hodlFounderNFT: "stake",
-        // Add other contract function mappings as needed
-    };
+            const throttled = throttle(async (index) => {
+                try {
+                    const response = await fetch(
+                        `${apiProvider}/collections/${collectionTicker}/nfts?withOwner=true&from=${
+                            index * 100
+                        }&size=100`
+                    );
 
-    const contractAddress = contractAddresses[contractLabel];
-    const stakeFunction = stakingFunctions[contractLabel];
+                    if (!response.ok) throw new Error(`HTTP Error ${response.status}`);
 
-    if (!contractAddress || !stakeFunction) {
-        throw new Error("Unsupported contract label or staking function");
-    }
+                    const data = await response.json();
 
-    // Helper function to fetch data with retry logic
-    const fetchData = async (url, retries = 3) => {
-        for (let attempt = 1; attempt <= retries; attempt++) {
-            try {
-                const response = await fetch(url);
-                if (!response.ok) {
-                    throw new Error(`HTTP Error ${response.status}`);
+                    const addrs = data.map((token) => ({
+                        owner: token.owner,
+                        identifier: token.identifier,
+                        metadataFileName: getMetadataFileName(token.attributes), // Extract metadata file name
+                        attributes: token.metadata?.attributes || [] // Save full attributes for filtering
+                    }));
+
+                    addressesArr.push(addrs);
+                    madeRequests++;
+                } catch (error) {
+                    console.error(`Error in batch ${index}:`, error.message);
                 }
-                return await response.json();
-            } catch (error) {
-                console.error(`Error fetching data (attempt ${attempt}):`, error.message);
-                if (attempt === retries) throw error;
-                await new Promise(resolve => setTimeout(resolve, 2000 * attempt)); // Exponential backoff
-            }
-        }
-    };
 
-    try {
-        // Fetch both staked and unstaked data using the correct function name for staking
-        const stakedData = await fetchData(
-            `${apiProvider.mainnet}/accounts/${contractAddress}/transfers?size=1000&token=${collectionTicker}&status=success&function=${stakeFunction}`
-        );
-
-        const unstakedData = await fetchData(
-            `${apiProvider.mainnet}/accounts/${contractAddress}/transfers?size=1000&token=${collectionTicker}&status=success&function=ESDTNFTTransfer`
-        );
-
-        // Combine and sort all transactions by timestamp
-        const allTransactions = [...stakedData, ...unstakedData].sort((a, b) => a.timestamp - b.timestamp);
-
-        const stakedNfts = new Map();
-
-        // Process transactions in chronological order
-        allTransactions.forEach(tx => {
-            const transfers = tx.action?.arguments?.transfers?.filter(
-                transfer => transfer.collection === collectionTicker
-            ) || [];
-
-            transfers.forEach(item => {
-                if (tx.function === stakeFunction) {
-                    // Stake transaction: mark NFT as staked by setting owner
-                    stakedNfts.set(item.identifier, {
-                        owner: tx.sender,
-                        identifier: item.identifier
-                    });
-                } else if (tx.function === 'ESDTNFTTransfer' && tx.sender === contractAddress) {
-                    // Unstake transaction: remove NFT from staked list
-                    stakedNfts.delete(item.identifier);
+                if (madeRequests >= repeats) {
+                    resolve(addressesArr.flat());
                 }
             });
+
+            for (let step = 0; step < repeats; step++) {
+                throttled(step);
+            }
         });
 
-        const stakedList = Array.from(stakedNfts.values());
-        console.log(`Total staked NFTs found: ${stakedList.length}`);
-        return stakedList;
+    let addresses = await makeCalls();
 
-    } catch (error) {
-        console.error("Error fetching staked NFTs data:", error);
-        throw error;
+    if (!includeSmartContracts) {
+        addresses = addresses.filter(
+            (addrObj) => 
+                typeof addrObj.owner === 'string' && !isSmartContractAddress(addrObj.owner)
+        );
     }
+
+    return addresses;
 };
 
+// Helper function to detect if the address is a Smart Contract
+const isSmartContractAddress = (address) => {
+    return address.startsWith('erd1qqqqqqqqqqqqq');
+};
 
-// Updated endpoint for staked NFTs snapshot draw
-app.post('/stakedNftsSnapshotDraw', checkToken, async (req, res) => {
-    try {
-        const { collectionTicker, contractLabel, numberOfWinners } = req.body;
+// Helper function to decode metadata attributes and get the file name
+const getMetadataFileName = (attributes) => {
+    const attrsDecoded = attributes
+        ? Buffer.from(attributes, 'base64').toString()
+        : undefined;
+    if (!attrsDecoded) return '';
 
-        // Fetch staked NFTs and their owners with filters
-        const stakedData = await fetchStakedNfts(collectionTicker, contractLabel);
-        if (stakedData.length === 0) {
-            return res.status(404).json({ error: 'No staked NFTs found for this collection' });
-        }
+    const metadataKey = attrsDecoded
+        .split(';')
+        .filter((item) => item.includes('metadata'))?.[0];
 
-        // Count total staked NFTs
-        const totalStakedCount = stakedData.length;
+    if (!metadataKey) return '';
 
-        // Random selection of winners
-        const shuffled = stakedData.sort(() => 0.5 - Math.random());
-        const winners = shuffled.slice(0, numberOfWinners);
-
-        // Generate CSV string for all staked NFTs
-        const csvString = await generateCsv(stakedData);
-
-        // Response includes selected winners, total staked count, and CSV snapshot
-        res.json({
-            winners,
-            totalStakedCount, // Adding total number of staked NFTs to response
-            message: `${numberOfWinners} winners have been selected from staked NFTs in collection ${collectionTicker}.`,
-            csvString, // All staked NFTs data as CSV
-        });
-    } catch (error) {
-        console.error('Error during stakedNftsSnapshotDraw:', error);
-        res.status(500).json({ error: error.message });
-    }
-});
-
-
-// Updated endpoint for SFT snapshot draw
-app.post('/sftSnapshotDraw', checkToken, async (req, res) => {
-    try {
-        const { collectionTicker, editions, numberOfWinners, includeSmartContracts } = req.body;
-
-        if (!collectionTicker || !editions || !numberOfWinners) {
-            return res.status(400).json({ error: 'Missing required parameters: collectionTicker, editions, numberOfWinners' });
-        }
-
-        // Split editions string into an array (e.g., "01,02,03" -> ["01", "02", "03"])
-        const editionArray = editions.split(',').map(e => e.trim());
-
-        // Fetch SFT owners
-        const sftOwners = await fetchSftOwners(collectionTicker, editionArray, includeSmartContracts);
-        if (sftOwners.length === 0) {
-            return res.status(404).json({ error: 'No SFT owners found for the specified collection and editions' });
-        }
-
-        // Generate unique owner stats
-        const uniqueOwnerStats = generateUniqueOwnerStats(sftOwners);
-
-        // Randomly select winners
-        const shuffled = sftOwners.sort(() => 0.5 - Math.random());
-        const winners = shuffled.slice(0, numberOfWinners);
-
-        // Generate CSV for all SFT owners
-        const csvString = await generateCsv(sftOwners.map(owner => ({
-            address: owner.address,
-            balance: owner.balance,
-        })));
-
-        // Response payload
-        res.json({
-            winners,
-            uniqueOwnerStats, // Include unique owner stats
-            totalOwners: sftOwners.length,
-            message: `${numberOfWinners} winners have been selected from the SFT collection "${collectionTicker}" across editions "${editions}".`,
-            csvString,
-        });
-    } catch (error) {
-        console.error('Error during sftSnapshotDraw:', error);
-        res.status(500).json({ error: error.message });
-    }
-});
-
-
+    return metadataKey.split('/')?.[1].split('.')?.[0];
+};
 // Helper function to fetch SFT owners
 const fetchSftOwners = async (collectionTicker, editions, includeSmartContracts) => {
+    const apiProvider = "https://api.multiversx.com";
     const owners = [];
     const size = 1000; // API allows fetching up to 1000 owners per call
 
     try {
-        // Loop through each edition provided by the user
         for (const edition of editions) {
             const editionTicker = `${collectionTicker}-${edition}`;
             let hasMore = true;
             let from = 0;
 
-            // Fetch owners in batches
             while (hasMore) {
                 const response = await fetch(
-                    `${apiProvider.mainnet}/nfts/${editionTicker}/accounts?size=${size}&from=${from}`
+                    `${apiProvider}/nfts/${editionTicker}/accounts?size=${size}&from=${from}`
                 );
 
                 if (!response.ok) {
@@ -497,14 +317,12 @@ const fetchSftOwners = async (collectionTicker, editions, includeSmartContracts)
 
                 const data = await response.json();
                 if (data.length === 0) {
-                    hasMore = false; // No more owners to fetch
+                    hasMore = false;
                 } else {
-                    // Filter out smart contracts if specified
                     const filteredOwners = data.filter(owner =>
                         includeSmartContracts || !isSmartContractAddress(owner.address)
                     );
 
-                    // Add owners to the result array
                     filteredOwners.forEach(owner => {
                         owners.push({
                             address: owner.address,
@@ -512,9 +330,8 @@ const fetchSftOwners = async (collectionTicker, editions, includeSmartContracts)
                         });
                     });
 
-                    // Move to the next page
                     from += size;
-                    hasMore = data.length === size; // If less than 1000, we reached the end
+                    hasMore = data.length === size;
                 }
             }
         }
@@ -526,74 +343,67 @@ const fetchSftOwners = async (collectionTicker, editions, includeSmartContracts)
     }
 };
 
-// Helper function for fetch with retry logic and exponential backoff
-const fetchWithRetry = async (url, retries = 3) => {
-    for (let attempt = 1; attempt <= retries; attempt++) {
-        try {
-            const response = await fetch(url);
-            if (!response.ok) {
-                throw new Error(`HTTP Error ${response.status}`);
-            }
-            return await response.json();
-        } catch (error) {
-            if (attempt < retries && error.message.includes("HTTP Error 429")) {
-                console.warn(`Rate limit hit. Retrying in ${2 ** attempt} seconds... (Attempt ${attempt})`);
-                await new Promise(resolve => setTimeout(resolve, 1000 * 2 ** attempt)); // Exponential backoff
-            } else {
-                console.error(`Failed after ${attempt} attempts:`, error.message);
-                throw error;
-            }
-        }
-    }
-    throw new Error("Exceeded maximum retry attempts");
-};
-
-// Helper function to fetch ESDT owners
-const fetchEsdtOwners = async (token, includeSmartContracts) => {
-    const owners = new Map();
-    const size = 1000; // Max batch size
-    let from = 0;
-
+// Route for SFT snapshot draw
+app.post('/sftSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
     try {
-        while (true) {
-            const url = `${apiProvider.mainnet}/tokens/${token}/accounts?size=${size}&from=${from}`;
-            const data = await fetchWithRetry(url);
+        const { collectionTicker, editions, numberOfWinners, includeSmartContracts } = req.body;
 
-            if (!data || data.length === 0) {
-                break; // No more data
-            }
-
-            data.forEach(owner => {
-                if (includeSmartContracts || !isSmartContractAddress(owner.address)) {
-                    owners.set(owner.address, {
-                        address: owner.address,
-                        // Preserve the raw balance for conversion
-                        balanceRaw: owner.balance,
-                    });
-                }
-            });
-
-            from += size;
-
-            // Stop fetching if we reach a large number of results
-            if (owners.size >= 100000) {
-                console.warn('Fetched 100,000 unique owners. Stopping further processing.');
-                break;
-            }
+        if (!collectionTicker || !editions || !numberOfWinners) {
+            return res.status(400).json({ error: 'Missing required parameters: collectionTicker, editions, numberOfWinners' });
         }
 
-        return Array.from(owners.values());
-    } catch (error) {
-        console.error('Error fetching ESDT owners:', error.message);
-        throw error;
-    }
-};
+        const editionArray = editions.split(',').map(e => e.trim());
 
+        const sftOwners = await fetchSftOwners(collectionTicker, editionArray, includeSmartContracts);
+        if (sftOwners.length === 0) {
+            return res.status(404).json({ error: 'No SFT owners found for the specified collection and editions' });
+        }
+
+        const uniqueOwnerStats = generateUniqueOwnerStats(sftOwners);
+
+        const shuffled = sftOwners.sort(() => 0.5 - Math.random());
+        const winners = shuffled.slice(0, numberOfWinners);
+
+        res.json({
+            winners,
+            uniqueOwnerStats,
+            totalOwners: sftOwners.length,
+            message: `${numberOfWinners} winners have been selected from the SFT collection "${collectionTicker}" across editions "${editions}".`,
+            usageFeeHash: req.usageFeeHash,
+        });
+    } catch (error) {
+        console.error('Error during sftSnapshotDraw:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Helper function to generate unique owner stats
+const generateUniqueOwnerStats = (data, isEsdt = false, decimals = 0) => {
+    const stats = {};
+
+    data.forEach(({ address, balance }) => {
+        const formattedBalance = isEsdt
+            ? parseFloat((Number(balance || 0) / 10 ** decimals).toFixed(decimals))
+            : 1;
+
+        if (!stats[address]) {
+            stats[address] = 0;
+        }
+        stats[address] += formattedBalance;
+    });
+
+    return Object.entries(stats)
+        .map(([address, count]) => ({
+            owner: address,
+            tokensCount: isEsdt ? count.toFixed(decimals) : count,
+        }))
+        .sort((a, b) => parseFloat(b.tokensCount) - parseFloat(a.tokensCount));
+};
 
 // Helper function to fetch token details
 const fetchTokenDetails = async (token) => {
     try {
-        const response = await fetch(`${apiProvider.mainnet}/tokens/${token}`);
+        const response = await fetch(`https://api.multiversx.com/tokens/${token}`);
         if (!response.ok) {
             throw new Error(`Failed to fetch token details for "${token}".`);
         }
@@ -603,9 +413,8 @@ const fetchTokenDetails = async (token) => {
         throw error;
     }
 };
-
-// Route for esdtSnapshotDraw
-app.post('/esdtSnapshotDraw', checkToken, async (req, res) => {
+// Route for ESDT snapshot draw
+app.post('/esdtSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
     try {
         const { token, includeSmartContracts, numberOfWinners } = req.body;
 
@@ -627,7 +436,7 @@ app.post('/esdtSnapshotDraw', checkToken, async (req, res) => {
         // Format balances using decimals
         const formattedOwners = esdtOwners.map(owner => ({
             address: owner.address,
-            balance: (Number(BigInt(owner.balanceRaw || 0)) / 10 ** decimals).toFixed(decimals), // Convert BigInt to human-readable format
+            balance: (Number(BigInt(owner.balanceRaw || 0)) / 10 ** decimals).toFixed(decimals),
         }));
 
         // Generate unique owner stats with formatted balances
@@ -635,36 +444,29 @@ app.post('/esdtSnapshotDraw', checkToken, async (req, res) => {
             if (!acc[owner.address]) {
                 acc[owner.address] = 0;
             }
-            acc[owner.address] += parseFloat(owner.balance); // Accumulate formatted balance
+            acc[owner.address] += parseFloat(owner.balance);
             return acc;
         }, {});
 
         const uniqueOwnerStatsArray = Object.entries(uniqueOwnerStats).map(([address, balance]) => ({
             owner: address,
-            tokensCount: balance.toFixed(decimals), // Ensure consistent decimal format
+            tokensCount: balance.toFixed(decimals),
         }));
 
-        uniqueOwnerStatsArray.sort((a, b) => parseFloat(b.tokensCount) - parseFloat(a.tokensCount)); // Sort descending
+        uniqueOwnerStatsArray.sort((a, b) => parseFloat(b.tokensCount) - parseFloat(a.tokensCount));
 
         // Randomly select winners from formatted owners
         const shuffled = formattedOwners.sort(() => 0.5 - Math.random());
         const winners = shuffled.slice(0, numberOfWinners);
 
-        // Generate CSV string with formatted balances
-        const csvString = await generateCsv(formattedOwners.map(owner => ({
-            address: owner.address,
-            balance: owner.balance, // Include formatted balance in CSV
-        })));
-
-        // Respond with the formatted data
         res.json({
             token,
             decimals,
             totalOwners: esdtOwners.length,
-            uniqueOwnerStats: uniqueOwnerStatsArray, // Include formatted stats
+            uniqueOwnerStats: uniqueOwnerStatsArray,
             winners,
-            csvString,
             message: `${numberOfWinners} winners have been selected from the token "${token}".`,
+            usageFeeHash: req.usageFeeHash,
         });
     } catch (error) {
         console.error('Error during esdtSnapshotDraw:', error);
@@ -672,8 +474,149 @@ app.post('/esdtSnapshotDraw', checkToken, async (req, res) => {
     }
 });
 
+// Helper function to fetch ESDT owners
+const fetchEsdtOwners = async (token, includeSmartContracts) => {
+    const owners = new Map();
+    const size = 1000; // Max batch size
+    let from = 0;
 
+    try {
+        while (true) {
+            const url = `https://api.multiversx.com/tokens/${token}/accounts?size=${size}&from=${from}`;
+            const response = await fetch(url);
 
+            if (!response.ok) {
+                console.error('API response:', response.status, await response.text());
+                throw new Error(`Failed to fetch owners for the specified token.`);
+            }
+
+            const data = await response.json();
+            if (!data || data.length === 0) {
+                break;
+            }
+
+            data.forEach(owner => {
+                if (includeSmartContracts || !isSmartContractAddress(owner.address)) {
+                    owners.set(owner.address, {
+                        address: owner.address,
+                        balanceRaw: owner.balance,
+                    });
+                }
+            });
+
+            from += size;
+
+            if (owners.size >= 100000) {
+                console.warn('Fetched 100,000 unique owners. Stopping further processing.');
+                break;
+            }
+        }
+
+        return Array.from(owners.values());
+    } catch (error) {
+        console.error('Error fetching ESDT owners:', error.message);
+        throw error;
+    }
+};
+
+// Route for staked NFTs snapshot draw
+app.post('/stakedNftsSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
+    try {
+        const { collectionTicker, contractLabel, numberOfWinners } = req.body;
+
+        // Fetch staked NFTs and their owners with filters
+        const stakedData = await fetchStakedNfts(collectionTicker, contractLabel);
+        if (stakedData.length === 0) {
+            return res.status(404).json({ error: 'No staked NFTs found for this collection' });
+        }
+
+        // Count total staked NFTs
+        const totalStakedCount = stakedData.length;
+
+        // Random selection of winners
+        const shuffled = stakedData.sort(() => 0.5 - Math.random());
+        const winners = shuffled.slice(0, numberOfWinners);
+
+        res.json({
+            winners,
+            totalStakedCount,
+            message: `${numberOfWinners} winners have been selected from staked NFTs in collection ${collectionTicker}.`,
+            usageFeeHash: req.usageFeeHash,
+        });
+    } catch (error) {
+        console.error('Error during stakedNftsSnapshotDraw:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Helper function to fetch staked NFTs
+const fetchStakedNfts = async (collectionTicker, contractLabel) => {
+    const contractAddresses = {
+        oneDexStakedNfts: "erd1qqqqqqqqqqqqqpgqrq6gv0ljf4y9md42pe4m6mh96hcpqnpuusls97tf33",
+        xoxnoStakedNfts: "erd1qqqqqqqqqqqqqpgqvpkd3g3uwludduv3797j54qt6c888wa59w2shntt6z",
+        artCpaStakedNfts: "erd1qqqqqqqqqqqqqpgqfken0exk7jpr85dx6f8ym3jgcagesfcqkqys0xnquf",
+        hodlFounderNFTs: "erd1qqqqqqqqqqqqqpgqpvlxt3n9ks66kuq4j8cvcv25k8a5rsx99g6suw5r66",
+    };
+
+    const stakingFunctions = {
+        oneDexStakedNfts: "userStake",
+        xoxnoStakedNfts: "stake",
+        artCpaStakedNfts: "userStake",
+        hodlFounderNFT: "stake",
+    };
+
+    const contractAddress = contractAddresses[contractLabel];
+    const stakeFunction = stakingFunctions[contractLabel];
+
+    if (!contractAddress || !stakeFunction) {
+        throw new Error("Unsupported contract label or staking function");
+    }
+
+    const stakedNfts = new Map();
+    try {
+        const fetchData = async (url) => {
+            const response = await fetch(url);
+            if (!response.ok) {
+                throw new Error(`HTTP Error ${response.status}`);
+            }
+            return await response.json();
+        };
+
+        const stakedData = await fetchData(
+            `https://api.multiversx.com/accounts/${contractAddress}/transfers?size=1000&token=${collectionTicker}&status=success&function=${stakeFunction}`
+        );
+
+        const unstakedData = await fetchData(
+            `https://api.multiversx.com/accounts/${contractAddress}/transfers?size=1000&token=${collectionTicker}&status=success&function=ESDTNFTTransfer`
+        );
+
+        const allTransactions = [...stakedData, ...unstakedData].sort((a, b) => a.timestamp - b.timestamp);
+
+        allTransactions.forEach(tx => {
+            const transfers = tx.action?.arguments?.transfers?.filter(
+                transfer => transfer.collection === collectionTicker
+            ) || [];
+
+            transfers.forEach(item => {
+                if (tx.function === stakeFunction) {
+                    stakedNfts.set(item.identifier, {
+                        owner: tx.sender,
+                        identifier: item.identifier
+                    });
+                } else if (tx.function === 'ESDTNFTTransfer' && tx.sender === contractAddress) {
+                    stakedNfts.delete(item.identifier);
+                }
+            });
+        });
+
+        return Array.from(stakedNfts.values());
+    } catch (error) {
+        console.error("Error fetching staked NFTs data:", error.message);
+        throw error;
+    }
+};
+
+      
 // Start the server
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
