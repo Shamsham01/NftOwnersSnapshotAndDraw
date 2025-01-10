@@ -67,8 +67,8 @@ const isWhitelisted = (walletAddress) => {
     return whitelist.some(entry => entry.walletAddress === walletAddress);
 };
 
-// Update `/execute/authorize` endpoint
-app.post('/execute/authorize', checkToken, (req, res) => {
+// Update `/authorize` endpoint
+app.post('/authorize', checkToken, (req, res) => {
     try {
         const pemContent = getPemContent(req);
         const walletAddress = deriveWalletAddressFromPem(pemContent);
