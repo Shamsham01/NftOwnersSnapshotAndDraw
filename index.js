@@ -100,6 +100,40 @@ const convertAmountToBlockchainValue = (amount, decimals) => {
     return new BigNumber(amount).multipliedBy(factor).toFixed(0);
 };
 
+const checkTransactionStatus = async (txHash, retries = 40, delay = 5000) => {
+    const txStatusUrl = `https://api.multiversx.com/transactions/${txHash}`;
+
+    for (let i = 0; i < retries; i++) {
+        try {
+            const response = await fetch(txStatusUrl);
+
+            if (!response.ok) {
+                console.warn(`Non-200 response for ${txHash}: ${response.status}`);
+                throw new Error(`HTTP error ${response.status}`);
+            }
+
+            const txStatus = await response.json();
+
+            if (txStatus.status === "success") {
+                return { status: "success", txHash };
+            } else if (txStatus.status === "fail") {
+                return { status: "fail", txHash };
+            }
+
+            console.log(`Transaction ${txHash} still pending, retrying...`);
+        } catch (error) {
+            console.error(`Error fetching transaction ${txHash}: ${error.message}`);
+        }
+
+        await new Promise(resolve => setTimeout(resolve, delay));
+    }
+
+    throw new Error(
+        `Transaction ${txHash} status could not be determined after ${retries} retries.`
+    );
+};
+
+
 // Function to send usage fee
 const sendUsageFee = async (pemContent) => {
     const signer = UserSigner.fromPem(pemContent);
