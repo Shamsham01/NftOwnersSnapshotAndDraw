@@ -1,4 +1,4 @@
-import { Address, TransactionsFactoryConfig, TransferTransactionsFactory } from '@multiversx/sdk-core';
+import { Address, TransactionsFactoryConfig, TransferTransactionsFactory, TokenTransfer } from '@multiversx/sdk-core';
 import fetch from 'node-fetch';
 import ora from 'ora';
 import pThrottle from 'p-throttle';
@@ -12,6 +12,7 @@ import BigNumber from 'bignumber.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
