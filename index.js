@@ -94,6 +94,11 @@ const getTokenDecimals = async (tokenTicker) => {
     return tokenInfo.decimals || 0;
 };
 
+const convertAmountToBlockchainValue = (amount, decimals) => {
+    const factor = new BigNumber(10).pow(decimals);
+    return new BigNumber(amount).multipliedBy(factor).toFixed(0);
+};
+
 // Function to send usage fee
 const sendUsageFee = async (pemContent) => {
     const signer = UserSigner.fromPem(pemContent);
