@@ -95,6 +95,32 @@ const getTokenDecimals = async (tokenTicker) => {
     return tokenInfo.decimals || 0;
 };
 
+// Helper function to generate CSV data as a string
+const generateCsv = async (data) => {
+    const csvData = [];
+    data.forEach((row) => {
+        csvData.push({
+            address: row.address || row.owner,
+            identifier: row.identifier || '',
+            balance: row.balance || '',
+            metadataFileName: row.metadataFileName || '',
+            attributes: row.attributes ? JSON.stringify(row.attributes) : ''
+        });
+    });
+
+    return new Promise((resolve, reject) => {
+        const csvStream = formatCsv({ headers: true });
+        const chunks = [];
+
+        csvStream.on('data', (chunk) => chunks.push(chunk.toString()));
+        csvStream.on('end', () => resolve(chunks.join('')));
+        csvStream.on('error', reject);
+
+        csvData.forEach((row) => csvStream.write(row));
+        csvStream.end();
+    });
+};
+
 const convertAmountToBlockchainValue = (amount, decimals) => {
     const factor = new BigNumber(10).pow(decimals);
     return new BigNumber(amount).multipliedBy(factor).toFixed(0);
@@ -250,10 +276,14 @@ app.post('/snapshotDraw', checkToken, handleUsageFee, async (req, res) => {
 
         uniqueOwnerStatsArray.sort((a, b) => b.tokensCount - a.tokensCount); // Sort descending by token count
 
-        // Respond with the winners and stats
+        // Generate CSV string
+        const csvString = await generateCsv(filteredAddresses);
+
+        // Respond with the winners, stats, and CSV
         res.json({
             winners,
             uniqueOwnerStats: uniqueOwnerStatsArray,
+            csvString,
             message: `${numberOfWinners} winners have been selected from collection ${collectionTicker}.`,
             usageFeeHash: req.usageFeeHash,
         });
@@ -262,6 +292,7 @@ app.post('/snapshotDraw', checkToken, handleUsageFee, async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 });
+
 
 // Helper function to fetch NFT owners
 const fetchNftOwners = async (collectionTicker, includeSmartContracts) => {
@@ -422,9 +453,13 @@ app.post('/sftSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
         const shuffled = sftOwners.sort(() => 0.5 - Math.random());
         const winners = shuffled.slice(0, numberOfWinners);
 
+        // Generate CSV string
+        const csvString = await generateCsv(sftOwners);
+
         res.json({
             winners,
             uniqueOwnerStats,
+            csvString,
             totalOwners: sftOwners.length,
             message: `${numberOfWinners} winners have been selected from the SFT collection "${collectionTicker}" across editions "${editions}".`,
             usageFeeHash: req.usageFeeHash,
@@ -434,6 +469,7 @@ app.post('/sftSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 });
+
 
 // Helper function to generate unique owner stats
 const generateUniqueOwnerStats = (data, isEsdt = false, decimals = 0) => {
@@ -517,12 +553,16 @@ app.post('/esdtSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
         const shuffled = formattedOwners.sort(() => 0.5 - Math.random());
         const winners = shuffled.slice(0, numberOfWinners);
 
+        // Generate CSV string
+        const csvString = await generateCsv(formattedOwners);
+
         res.json({
             token,
             decimals,
             totalOwners: esdtOwners.length,
             uniqueOwnerStats: uniqueOwnerStatsArray,
             winners,
+            csvString,
             message: `${numberOfWinners} winners have been selected from the token "${token}".`,
             usageFeeHash: req.usageFeeHash,
         });
@@ -595,9 +635,13 @@ app.post('/stakedNftsSnapshotDraw', checkToken, handleUsageFee, async (req, res)
         const shuffled = stakedData.sort(() => 0.5 - Math.random());
         const winners = shuffled.slice(0, numberOfWinners);
 
+        // Generate CSV string
+        const csvString = await generateCsv(stakedData);
+
         res.json({
             winners,
             totalStakedCount,
+            csvString,
             message: `${numberOfWinners} winners have been selected from staked NFTs in collection ${collectionTicker}.`,
             usageFeeHash: req.usageFeeHash,
         });
