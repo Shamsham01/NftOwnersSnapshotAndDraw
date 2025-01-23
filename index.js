@@ -42,7 +42,6 @@ const checkToken = (req, res, next) => {
 
 // Function to validate and return the PEM content from the request body
 const getPemContent = (req) => {
-    console.log("Request Body:", req.body); // Log the incoming request body for debugging
     const pemContent = req.body.walletPem;
     if (!pemContent || typeof pemContent !== 'string' || !pemContent.includes('-----BEGIN PRIVATE KEY-----')) {
         throw new Error('Invalid PEM content');
