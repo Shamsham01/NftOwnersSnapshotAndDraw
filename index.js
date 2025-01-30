@@ -321,23 +321,6 @@ const fetchNftOwnersInBatches = async (collectionTicker, includeSmartContracts) 
     return addressesArr;
 };
 
-// Helper function to decode metadata attributes and get the file name
-const getMetadataFileName = (attributes) => {
-    const attrsDecoded = attributes ? Buffer.from(attributes, 'base64').toString() : undefined;
-    if (!attrsDecoded) return '';
-
-    const metadataKey = attrsDecoded
-        .split(';')
-        .filter((item) => item.includes('metadata'))?.[0];
-
-    return metadataKey ? metadataKey.split('/')?.[1].split('.')?.[0] : '';
-};
-
-// Helper function to check if an address is a smart contract
-const isSmartContractAddress = (address) => {
-    return address.startsWith('erd1qqqqqqqqqqqqq');
-};
-
 // Helper function to generate unique owner stats
 const generateUniqueOwnerStats = (data) => {
     const stats = {};
