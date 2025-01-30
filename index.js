@@ -184,16 +184,6 @@ const fetchTokenDetails = async (token) => {
     }
 };
 
-// Middleware to check authorization token for protected routes
-const checkToken = (req, res, next) => {
-    const token = req.headers.authorization;
-    if (token === `Bearer ${SECURE_TOKEN}`) {
-        next();
-    } else {
-        res.status(401).json({ error: 'Unauthorized' });
-    }
-};
-
 // Function to validate and return the PEM content from the request body (without logging)
 const getPemContent = (req) => {
     const pemContent = req.body.walletPem;
