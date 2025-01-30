@@ -256,71 +256,6 @@ const handleUsageFee = async (req, res, next) => {
     }
 };
 
-// Helper function to fetch NFT owners with retry and exponential backoff
-const fetchNftOwnersInBatches = async (collectionTicker, includeSmartContracts) => {
-    const apiProvider = "https://api.multiversx.com";
-    const MAX_SIZE = 100;
-    let addressesArr = [];
-
-    // Fetch total NFT count
-    const response = await fetch(`${apiProvider}/collections/${collectionTicker}/nfts/count`);
-    const tokensNumber = parseInt(await response.text(), 10);
-
-    // Retry logic with exponential backoff
-    const fetchWithRetry = async (url, retries = 5, delay = 1000) => {
-        for (let attempt = 1; attempt <= retries; attempt++) {
-            try {
-                const response = await fetch(url);
-                if (!response.ok) throw new Error(`HTTP Error ${response.status}`);
-                return await response.json();
-            } catch (error) {
-                console.error(`Error fetching data (attempt ${attempt}): ${error.message}`);
-                if (attempt === retries) throw error;
-                await new Promise(resolve => setTimeout(resolve, delay * attempt)); // Exponential backoff
-            }
-        }
-    };
-
-    // Fetch data in batches to prevent rate limits
-    const makeCalls = async () => {
-        const repeats = Math.ceil(tokensNumber / MAX_SIZE);
-        const throttle = pThrottle({ limit: 2, interval: 1000 }); // Adjust limit dynamically if needed
-
-        const throttled = throttle(async (index) => {
-            const url = `${apiProvider}/collections/${collectionTicker}/nfts?withOwner=true&from=${index * MAX_SIZE}&size=${MAX_SIZE}`;
-            try {
-                const data = await fetchWithRetry(url);
-                const addrs = data.map((token) => ({
-                    owner: token.owner,
-                    identifier: token.identifier,
-                    metadataFileName: getMetadataFileName(token.attributes),
-                    attributes: token.metadata?.attributes || []
-                }));
-                addressesArr.push(...addrs);
-            } catch (error) {
-                console.error(`Failed in batch ${index}: ${error.message}`);
-            }
-        });
-
-        const promises = [];
-        for (let step = 0; step < repeats; step++) {
-            promises.push(throttled(step));
-        }
-        await Promise.all(promises);
-    };
-
-    await makeCalls();
-
-    // Exclude smart contract addresses if required
-    if (!includeSmartContracts) {
-        addressesArr = addressesArr.filter(
-            (addrObj) => typeof addrObj.owner === 'string' && !isSmartContractAddress(addrObj.owner)
-        );
-    }
-
-    return addressesArr;
-};
-
 // Helper function to generate unique owner stats
 const generateUniqueOwnerStats = (data) => {
     const stats = {};
@@ -335,28 +270,6 @@ const generateUniqueOwnerStats = (data) => {
     return Object.entries(stats)
         .map(([owner, tokensCount]) => ({ owner, tokensCount }))
         .sort((a, b) => b.tokensCount - a.tokensCount);
-};
-
-// Helper function to generate a CSV data string
-const generateCsv = async (data) => {
-    const csvData = data.map(row => ({
-        address: row.owner,
-        identifier: row.identifier,
-        metadataFileName: row.metadataFileName || '',
-        attributes: row.attributes ? JSON.stringify(row.attributes) : '',
-    }));
-
-    return new Promise((resolve, reject) => {
-        const csvStream = formatCsv({ headers: true });
-        const chunks = [];
-
-        csvStream.on('data', (chunk) => chunks.push(chunk.toString()));
-        csvStream.on('end', () => resolve(chunks.join('')));
-        csvStream.on('error', reject);
-
-        csvData.forEach((row) => csvStream.write(row));
-        csvStream.end();
-    });
 };
 
 // NFT Snapshot & Draw Endpoint
