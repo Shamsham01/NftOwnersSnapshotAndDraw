@@ -1,4 +1,13 @@
-import { Address, Transaction, TransactionPayload } from '@multiversx/sdk-core';
+import { 
+    Address, 
+    TransactionsFactoryConfig, 
+    TransferTransactionsFactory, 
+    TokenTransfer, 
+    Token, 
+    Transaction, 
+    TransactionPayload
+} from '@multiversx/sdk-core';
+
 import fetch from 'node-fetch';
 import ora from 'ora';
 import pThrottle from 'p-throttle';
@@ -8,17 +17,25 @@ import { ProxyNetworkProvider } from '@multiversx/sdk-network-providers';
 import { UserSigner } from '@multiversx/sdk-wallet';
 import { format as formatCsv } from 'fast-csv';
 import { Readable } from 'stream';
+import BigNumber from 'bignumber.js';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 10000;
 const SECURE_TOKEN = process.env.SECURE_TOKEN;  // Secure Token for authorization
-const MAX_SIZE = 100;
-const RETRY_LIMIT = 3;  // Retry limit for API requests
+const USAGE_FEE = 500; // Fee in REWARD tokens
+const REWARD_TOKEN = "REWARD-cf6eac"; // Token identifier
+const TREASURY_WALLET = "erd158k2c3aserjmwnyxzpln24xukl2fsvlk9x46xae4dxl5xds79g6sdz37qn"; // Treasury wallet
 const provider = new ProxyNetworkProvider("https://gateway.multiversx.com", { clientName: "javascript-api" });
-const apiProvider = {
-  mainnet: 'https://api.multiversx.com',
-  devnet: 'https://devnet-api.multiversx.com',
-};  // Change based on network
+
+const whitelistFilePath = path.join(__dirname, 'whitelist.json');
+
 
 app.use(bodyParser.json());  // Support JSON-encoded bodies
 
@@ -215,11 +232,16 @@ const sendUsageFee = async (pemContent) => {
         const accountOnNetwork = await provider.getAccount(senderAddress);
         const senderNonce = accountOnNetwork.nonce;
 
+        // Ensure that TREASURY_WALLET is defined
+        if (!TREASURY_WALLET) {
+            throw new Error("Treasury wallet address is not defined.");
+        }
+
         const tx = new Transaction({
             nonce: senderNonce,
-            receiver: new Address(process.env.USAGE_FEE_RECEIVER),
+            receiver: new Address(TREASURY_WALLET),  // Fixed receiver wallet
             sender: senderAddress,
-            value: process.env.USAGE_FEE_AMOUNT,
+            value: USAGE_FEE.toString(),  // Ensures usage fee is a string
             gasLimit: 50000, // Standard gas limit
             data: new TransactionPayload("Usage Fee Payment"),
             chainID: '1',
@@ -234,13 +256,14 @@ const sendUsageFee = async (pemContent) => {
     }
 };
 
+
 // Middleware to process the usage fee payment
 const handleUsageFee = async (req, res, next) => {
     try {
         const pemContent = getPemContent(req);
         const walletAddress = deriveWalletAddressFromPem(pemContent);
 
-        // Skip the usage fee if the wallet is whitelisted
+        // Check if wallet is whitelisted
         if (isWhitelisted(walletAddress)) {
             console.log(`Wallet ${walletAddress} is whitelisted. Skipping usage fee.`);
             next();
@@ -249,13 +272,14 @@ const handleUsageFee = async (req, res, next) => {
 
         // Execute the usage fee transaction
         const txHash = await sendUsageFee(pemContent);
-        req.usageFeeHash = txHash; // Attach transaction hash to the request
+        req.usageFeeHash = txHash;  // Attach transaction hash to the request
         next();
     } catch (error) {
-        console.error('Error processing UsageFee:', error.message);
+        console.error("Error processing UsageFee:", error.message);
         res.status(400).json({ error: error.message });
     }
 };
+
 
 // Helper function to generate unique owner stats
 const generateUniqueOwnerStats = (data) => {
