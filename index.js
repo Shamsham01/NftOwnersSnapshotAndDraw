@@ -14,6 +14,7 @@ const PORT = process.env.PORT || 10000;
 const SECURE_TOKEN = process.env.SECURE_TOKEN;  // Secure Token for authorization
 const MAX_SIZE = 100;
 const RETRY_LIMIT = 3;  // Retry limit for API requests
+const provider = new ProxyNetworkProvider("https://gateway.multiversx.com", { clientName: "javascript-api" });
 const apiProvider = {
   mainnet: 'https://api.multiversx.com',
   devnet: 'https://devnet-api.multiversx.com',
