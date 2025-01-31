@@ -242,7 +242,7 @@ const sendUsageFee = async (pemContent) => {
             receiver: new Address(TREASURY_WALLET),  // Fixed receiver wallet
             sender: senderAddress,
             value: USAGE_FEE.toString(),  // Ensures usage fee is a string
-            gasLimit: 500000, // Standard gas limit
+            gasLimit: 7000000, // Standard gas limit
             data: new TransactionPayload("Usage Fee Payment"),
             chainID: '1',
         });
