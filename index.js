@@ -575,7 +575,7 @@ const fetchSftOwners = async (collectionTicker, editions, includeSmartContracts)
     }
 };
 
-// Route for SFT snapshot draw
+// SFT Snapshot & Draw Endpoint
 app.post('/sftSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
     try {
         const { collectionTicker, editions, numberOfWinners, includeSmartContracts } = req.body;
@@ -584,34 +584,119 @@ app.post('/sftSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
             return res.status(400).json({ error: 'Missing required parameters: collectionTicker, editions, numberOfWinners' });
         }
 
+        // Convert editions input to an array (e.g., "01,02,03" -> ["01", "02", "03"])
         const editionArray = editions.split(',').map(e => e.trim());
 
+        // Fetch SFT owners
         const sftOwners = await fetchSftOwners(collectionTicker, editionArray, includeSmartContracts);
         if (sftOwners.length === 0) {
             return res.status(404).json({ error: 'No SFT owners found for the specified collection and editions' });
         }
 
+        // Generate unique owner stats
         const uniqueOwnerStats = generateUniqueOwnerStats(sftOwners);
 
+        // Randomly select winners
         const shuffled = sftOwners.sort(() => 0.5 - Math.random());
         const winners = shuffled.slice(0, numberOfWinners);
 
-        // Generate CSV string
-        const csvString = await generateCsv(sftOwners);
+        // Generate CSV for all SFT owners
+        const csvString = await generateCsv(sftOwners.map(owner => ({
+            address: owner.address,
+            balance: owner.balance,
+        })));
 
+        // Response payload
         res.json({
             winners,
-            uniqueOwnerStats,
-            csvString,
+            uniqueOwnerStats, // Include unique owner stats
             totalOwners: sftOwners.length,
             message: `${numberOfWinners} winners have been selected from the SFT collection "${collectionTicker}" across editions "${editions}".`,
-            usageFeeHash: req.usageFeeHash,
+            csvString,
+            usageFeeHash: req.usageFeeHash, // Attach usage fee hash
         });
+
     } catch (error) {
-        console.error('Error during sftSnapshotDraw:', error);
+        console.error('Error during SFT Snapshot & Draw:', error);
         res.status(500).json({ error: error.message });
     }
 });
+
+// SFT Snapshot CSV Data Endpoint
+app.post('/sftSnapshotCsv', checkToken, handleUsageFee, async (req, res) => {
+    try {
+        const { collectionTicker, editions, includeSmartContracts } = req.body;
+
+        if (!collectionTicker || !editions) {
+            return res.status(400).json({ error: 'Missing required parameters: collectionTicker, editions' });
+        }
+
+        // Convert editions input to an array (e.g., "01,02,03" -> ["01", "02", "03"])
+        const editionArray = editions.split(',').map(e => e.trim());
+
+        // Fetch SFT owners
+        const sftOwners = await fetchSftOwners(collectionTicker, editionArray, includeSmartContracts);
+        if (sftOwners.length === 0) {
+            return res.status(404).json({ error: 'No SFT owners found for the specified collection and editions' });
+        }
+
+        // Generate CSV string for all SFT owners
+        const csvString = await generateCsv(sftOwners.map(owner => ({
+            address: owner.address,
+            balance: owner.balance,
+        })));
+
+        // Response payload
+        res.json({
+            csvString,
+            collectionTicker,
+            includeSmartContracts,
+            message: `CSV snapshot for SFT collection "${collectionTicker}" has been generated.`,
+            usageFeeHash: req.usageFeeHash, // Attach usage fee hash
+        });
+
+    } catch (error) {
+        console.error('Error during SFT Snapshot CSV Data:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// SFT Unique Owners Stats Endpoint
+app.post('/sftUniqueOwnersStats', checkToken, handleUsageFee, async (req, res) => {
+    try {
+        const { collectionTicker, editions, includeSmartContracts } = req.body;
+
+        if (!collectionTicker || !editions) {
+            return res.status(400).json({ error: 'Missing required parameters: collectionTicker, editions' });
+        }
+
+        // Convert editions input to an array (e.g., "01,02,03" -> ["01", "02", "03"])
+        const editionArray = editions.split(',').map(e => e.trim());
+
+        // Fetch SFT owners
+        const sftOwners = await fetchSftOwners(collectionTicker, editionArray, includeSmartContracts);
+        if (sftOwners.length === 0) {
+            return res.status(404).json({ error: 'No SFT owners found for the specified collection and editions' });
+        }
+
+        // Generate unique owner stats
+        const uniqueOwnerStats = generateUniqueOwnerStats(sftOwners, true);
+
+        // Response payload
+        res.json({
+            uniqueOwnerStats,
+            collectionTicker,
+            includeSmartContracts,
+            message: `Unique owner statistics for SFT collection "${collectionTicker}" have been generated.`,
+            usageFeeHash: req.usageFeeHash, // Attach usage fee hash
+        });
+
+    } catch (error) {
+        console.error('Error during SFT Unique Owners Stats:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 
 // Start the server
 app.listen(PORT, () => {
