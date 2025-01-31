@@ -74,6 +74,44 @@ const getTokenDecimals = async (tokenTicker) => {
     return tokenInfo.decimals || 0;
 };
 
+const convertAmountToBlockchainValue = (amount, decimals) => {
+    const factor = new BigNumber(10).pow(decimals);
+    return new BigNumber(amount).multipliedBy(factor).toFixed(0);
+};
+
+const checkTransactionStatus = async (txHash, retries = 40, delay = 5000) => {
+    const txStatusUrl = `https://api.multiversx.com/transactions/${txHash}`;
+
+    for (let i = 0; i < retries; i++) {
+        try {
+            const response = await fetch(txStatusUrl);
+
+            if (!response.ok) {
+                console.warn(`Non-200 response for ${txHash}: ${response.status}`);
+                throw new Error(`HTTP error ${response.status}`);
+            }
+
+            const txStatus = await response.json();
+
+            if (txStatus.status === "success") {
+                return { status: "success", txHash };
+            } else if (txStatus.status === "fail") {
+                return { status: "fail", txHash };
+            }
+
+            console.log(`Transaction ${txHash} still pending, retrying...`);
+        } catch (error) {
+            console.error(`Error fetching transaction ${txHash}: ${error.message}`);
+        }
+
+        await new Promise(resolve => setTimeout(resolve, delay));
+    }
+
+    throw new Error(
+        `Transaction ${txHash} status could not be determined after ${retries} retries.`
+    );
+};
+
 // Helper function to generate CSV data as a string
 const generateCsv = async (data) => {
     const csvData = [];
@@ -216,69 +254,81 @@ const deriveWalletAddressFromPem = (pemContent) => {
     return signer.getAddress().toString();
 };
 
-// Function to check if a wallet is whitelisted
-const isWhitelisted = (walletAddress) => {
-    const whitelistedWallets = process.env.WHITELISTED_WALLETS?.split(',') || [];
-    return whitelistedWallets.includes(walletAddress);
-};
-
-// Function to send the usage fee transaction
-const sendUsageFee = async (pemContent) => {
-    try {
-        const signer = UserSigner.fromPem(pemContent);
-        const senderAddress = signer.getAddress();
-
-        const accountOnNetwork = await provider.getAccount(senderAddress);
-        const senderNonce = accountOnNetwork.nonce;
-
-        // Ensure that TREASURY_WALLET is defined
-        if (!TREASURY_WALLET) {
-            throw new Error("Treasury wallet address is not defined.");
-        }
-
-        const tx = new Transaction({
-            nonce: senderNonce,
-            receiver: new Address(TREASURY_WALLET),  // Fixed receiver wallet
-            sender: senderAddress,
-            value: USAGE_FEE.toString(),  // Ensures usage fee is a string
-            gasLimit: 7000000, // Standard gas limit
-            data: new TransactionPayload("Usage Fee Payment"),
-            chainID: '1',
-        });
-
-        await signer.sign(tx);
-        const txHash = await provider.sendTransaction(tx);
-        return txHash.toString();
-    } catch (error) {
-        console.error("Error sending usage fee:", error.message);
-        throw new Error("Usage fee transaction failed.");
+// Load the whitelist file
+const loadWhitelist = () => {
+    if (!fs.existsSync(whitelistFilePath)) {
+        fs.writeFileSync(whitelistFilePath, JSON.stringify([], null, 2));
     }
+    const data = fs.readFileSync(whitelistFilePath);
+    return JSON.parse(data);
 };
 
+// Check if a wallet is whitelisted
+const isWhitelisted = (walletAddress) => {
+    const whitelist = loadWhitelist();
+    return whitelist.some(entry => entry.walletAddress === walletAddress);
+};
 
-// Middleware to process the usage fee payment
+// Function to send usage fee
+const sendUsageFee = async (pemContent) => {
+    const signer = UserSigner.fromPem(pemContent);
+    const senderAddress = signer.getAddress();
+    const receiverAddress = new Address(TREASURY_WALLET);
+
+    const accountOnNetwork = await provider.getAccount(senderAddress);
+    const nonce = accountOnNetwork.nonce;
+
+    const decimals = await getTokenDecimals(REWARD_TOKEN);
+    const convertedAmount = convertAmountToBlockchainValue(USAGE_FEE, decimals);
+
+    const factoryConfig = new TransactionsFactoryConfig({ chainID: "1" });
+    const factory = new TransferTransactionsFactory({ config: factoryConfig });
+
+    const tx = factory.createTransactionForESDTTokenTransfer({
+        sender: senderAddress,
+        receiver: receiverAddress,
+        tokenTransfers: [
+            new TokenTransfer({
+                token: new Token({ identifier: REWARD_TOKEN }),
+                amount: BigInt(convertedAmount),
+            }),
+        ],
+    });
+
+    tx.nonce = nonce;
+    tx.gasLimit = BigInt(500000);
+
+    await signer.sign(tx);
+    const txHash = await provider.sendTransaction(tx);
+
+    const status = await checkTransactionStatus(txHash.toString());
+    if (status.status !== "success") {
+        throw new Error('UsageFee transaction failed. Ensure sufficient REWARD tokens are available.');
+    }
+    return txHash.toString();
+};
+
+// Middleware to handle usage fee
 const handleUsageFee = async (req, res, next) => {
     try {
         const pemContent = getPemContent(req);
         const walletAddress = deriveWalletAddressFromPem(pemContent);
 
-        // Check if wallet is whitelisted
+        // Check if the wallet is whitelisted
         if (isWhitelisted(walletAddress)) {
             console.log(`Wallet ${walletAddress} is whitelisted. Skipping usage fee.`);
-            next();
+            next(); // Skip the usage fee and proceed
             return;
         }
 
-        // Execute the usage fee transaction
         const txHash = await sendUsageFee(pemContent);
-        req.usageFeeHash = txHash;  // Attach transaction hash to the request
+        req.usageFeeHash = txHash; // Attach transaction hash to the request
         next();
     } catch (error) {
-        console.error("Error processing UsageFee:", error.message);
+        console.error('Error processing UsageFee:', error.message);
         res.status(400).json({ error: error.message });
     }
 };
-
 
 // Helper function to generate unique owner stats
 const generateUniqueOwnerStats = (data) => {
