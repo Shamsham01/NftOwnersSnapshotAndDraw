@@ -331,20 +331,29 @@ const handleUsageFee = async (req, res, next) => {
 };
 
 // Helper function to generate unique owner stats
-const generateUniqueOwnerStats = (data) => {
+const generateUniqueOwnerStats = (data, assetType = "NFT") => {
     const stats = {};
 
-    data.forEach(({ owner }) => {
+    data.forEach(({ owner, balance }) => {
         if (!stats[owner]) {
             stats[owner] = 0;
         }
-        stats[owner] += 1; // Each NFT counts as 1 for the owner
+
+        if (assetType === "NFT") {
+            stats[owner] += 1;  // Count each NFT as 1
+        } else {
+            stats[owner] += parseFloat(balance || 0);  // Aggregate balances for SFT and ESDT
+        }
     });
 
     return Object.entries(stats)
-        .map(([owner, tokensCount]) => ({ owner, tokensCount }))
-        .sort((a, b) => b.tokensCount - a.tokensCount);
+        .map(([owner, tokensCount]) => ({
+            owner,
+            tokensCount: assetType === "NFT" ? tokensCount : tokensCount.toFixed(6) // Format balances properly
+        }))
+        .sort((a, b) => parseFloat(b.tokensCount) - parseFloat(a.tokensCount)); // Sort by token count
 };
+
 
 // NFT Snapshot & Draw Endpoint
 app.post('/nftSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
@@ -491,25 +500,12 @@ app.post('/nftUniqueOwnersStats', checkToken, handleUsageFee, async (req, res) =
             return res.status(404).json({ error: 'No NFTs found matching the criteria.' });
         }
 
-        // Generate unique owner stats
-        const uniqueOwnerStats = filteredAddresses.reduce((stats, item) => {
-            if (!stats[item.owner]) {
-                stats[item.owner] = 0;
-            }
-            stats[item.owner] += 1; // Increment the count for each NFT owned
-            return stats;
-        }, {});
-
-        const uniqueOwnerStatsArray = Object.entries(uniqueOwnerStats).map(([owner, tokensCount]) => ({
-            owner,
-            tokensCount,
-        }));
-
-        uniqueOwnerStatsArray.sort((a, b) => b.tokensCount - a.tokensCount); // Sort descending by token count
+        // Use the central function for consistent unique owner stats
+        const uniqueOwnerStats = generateUniqueOwnerStats(filteredAddresses, "NFT");
 
         // Return the unique owner stats
         res.json({
-            uniqueOwnerStats: uniqueOwnerStatsArray,
+            uniqueOwnerStats,
             collectionTicker,
             includeSmartContracts,
             traitType,
@@ -524,6 +520,7 @@ app.post('/nftUniqueOwnersStats', checkToken, handleUsageFee, async (req, res) =
         res.status(500).json({ error: error.message });
     }
 });
+
 
 // Helper function to fetch SFT owners
 const fetchSftOwners = async (collectionTicker, editions, includeSmartContracts) => {
@@ -594,7 +591,7 @@ app.post('/sftSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
         }
 
         // Generate unique owner stats
-        const uniqueOwnerStats = generateUniqueOwnerStats(sftOwners);
+        const uniqueOwnerStats = generateUniqueOwnerStats(sftOwners, "SFT");
 
         // Randomly select winners
         const shuffled = sftOwners.sort(() => 0.5 - Math.random());
