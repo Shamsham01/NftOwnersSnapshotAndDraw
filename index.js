@@ -204,9 +204,10 @@ const fetchNftOwnersInBatches = async (collectionTicker, includeSmartContracts) 
 };
 
 
-// Helper function to detect if the address is a Smart Contract
+// Helper function to detect if an address is a Smart Contract OR the Burn SC
 const isSmartContractAddress = (address) => {
-    return address.startsWith('erd1qqqqqqqqqqqqq');
+    return address.startsWith('erd1qqqqqqqqqqqqq') || 
+           address === 'erd1deaddeaddeaddeaddeaddeaddeaddeaddeaddeaddeaddeaddeaqtv0gag'; 
 };
 
 // Helper function to decode metadata attributes and get the file name
