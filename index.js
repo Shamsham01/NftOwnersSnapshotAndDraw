@@ -331,27 +331,26 @@ const handleUsageFee = async (req, res, next) => {
 };
 
 // Helper function to generate unique owner stats
-const generateUniqueOwnerStats = (data, assetType = "NFT") => {
+const generateUniqueOwnerStats = (data, type) => {
     const stats = {};
 
-    data.forEach(({ owner, balance }) => {
+    data.forEach((entry) => {
+        const owner = entry.address || entry.owner; // Ensure the correct owner field is used
+        if (!owner) return;
+
+        const balance = type === "SFT" ? parseInt(entry.balance, 10) || 1 : 1; // Convert balance for SFTs
         if (!stats[owner]) {
             stats[owner] = 0;
         }
-
-        if (assetType === "NFT") {
-            stats[owner] += 1;  // Count each NFT as 1
-        } else {
-            stats[owner] += parseFloat(balance || 0);  // Aggregate balances for SFT and ESDT
-        }
+        stats[owner] += balance;
     });
 
     return Object.entries(stats)
         .map(([owner, tokensCount]) => ({
             owner,
-            tokensCount: assetType === "NFT" ? tokensCount : tokensCount.toFixed(6) // Format balances properly
+            tokensCount: tokensCount, // Ensure it's an integer
         }))
-        .sort((a, b) => parseFloat(b.tokensCount) - parseFloat(a.tokensCount)); // Sort by token count
+        .sort((a, b) => b.tokensCount - a.tokensCount); // Sort descending by token count
 };
 
 
@@ -590,7 +589,7 @@ app.post('/sftSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
             return res.status(404).json({ error: 'No SFT owners found for the specified collection and editions' });
         }
 
-        // Generate unique owner stats
+        // ✅ Generate unique owner stats with updated function
         const uniqueOwnerStats = generateUniqueOwnerStats(sftOwners, "SFT");
 
         // Randomly select winners
@@ -606,7 +605,7 @@ app.post('/sftSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
         // Response payload
         res.json({
             winners,
-            uniqueOwnerStats, // Include unique owner stats
+            uniqueOwnerStats, // ✅ This now includes proper owners & integer token counts
             totalOwners: sftOwners.length,
             message: `${numberOfWinners} winners have been selected from the SFT collection "${collectionTicker}" across editions "${editions}".`,
             csvString,
