@@ -581,6 +581,7 @@ app.post('/sftSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
             return res.status(400).json({ error: 'Missing required parameters: collectionTicker, editions, numberOfWinners' });
         }
 
+        // Convert editions input to an array (e.g., "01,02,03" -> ["01", "02", "03"])
         const editionArray = editions.split(',').map(e => e.trim());
 
         // Fetch SFT owners
@@ -589,27 +590,31 @@ app.post('/sftSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
             return res.status(404).json({ error: 'No SFT owners found for the specified collection and editions' });
         }
 
-        // Generate unique owner stats (SFTs should sum balances)
+        // Generate unique owner stats
         const uniqueOwnerStats = generateUniqueOwnerStats(sftOwners, "SFT");
 
         // Randomly select winners
         const shuffled = sftOwners.sort(() => 0.5 - Math.random());
         const winners = shuffled.slice(0, numberOfWinners);
 
-        // Generate CSV string
-        const csvString = await generateCsv(sftOwners);
+        // Generate CSV for all SFT owners
+        const csvString = await generateCsv(sftOwners.map(owner => ({
+            address: owner.address,
+            balance: owner.balance,
+        })));
 
+        // Response payload
         res.json({
             winners,
-            uniqueOwnerStats,  // Now correctly calculates the total balance per owner
-            csvString,
-            totalOwners: uniqueOwnerStats.length,  // Total unique owners, not total tokens
+            uniqueOwnerStats, // Include unique owner stats
+            totalOwners: sftOwners.length,
             message: `${numberOfWinners} winners have been selected from the SFT collection "${collectionTicker}" across editions "${editions}".`,
-            usageFeeHash: req.usageFeeHash,
+            csvString,
+            usageFeeHash: req.usageFeeHash, // Attach usage fee hash
         });
 
     } catch (error) {
-        console.error('Error during sftSnapshotDraw:', error);
+        console.error('Error during SFT Snapshot & Draw:', error);
         res.status(500).json({ error: error.message });
     }
 });
