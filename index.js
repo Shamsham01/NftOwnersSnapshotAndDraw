@@ -732,6 +732,7 @@ app.post('/esdtSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
 
         // Step 1: Fetch Token Decimals
         const decimals = await fetchTokenDecimals(token);
+        console.log(`Token Decimals: ${decimals}`);
 
         // Step 2: Fetch Token Owners in Batches with API Throttling
         const esdtOwners = await fetchEsdtOwners(token, includeSmartContracts);
@@ -743,12 +744,15 @@ app.post('/esdtSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
         console.log(`Fetched ${esdtOwners.length} ESDT owners`);
 
         // Step 3: Format balances safely
-        const formattedOwners = esdtOwners.map(owner => ({
-            address: owner.address,
-            balance: owner.balanceRaw
-                ? (Number(BigInt(owner.balanceRaw)) / Math.pow(10, decimals)).toFixed(decimals)
-                : "0.00000000", // Default to 0 if balanceRaw is missing
-        }));
+        const formattedOwners = esdtOwners.map(owner => {
+            let rawBalance = owner.balanceRaw ? BigInt(owner.balanceRaw) : BigInt(0);
+            let formattedBalance = Number(rawBalance) / Math.pow(10, decimals);
+
+            return {
+                address: owner.address,
+                balance: formattedBalance.toFixed(decimals), // Ensure proper decimal format
+            };
+        });
 
         // Step 4: Generate Unique Owner Stats
         const uniqueOwnerStats = generateUniqueOwnerStats(formattedOwners, "ESDT", decimals);
