@@ -649,81 +649,75 @@ app.post('/sftSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
     }
 });
 
+// Helper function to fetch ESDT owners in batches with retry and throttling
+const fetchEsdtOwners = async (token, includeSmartContracts) => {
+    const owners = new Map();
+    const batchSize = 1000; // Max batch size per API call
+    let from = 0;
+    let totalFetched = 0;
+    const maxRetries = 5;
 
-// SFT Snapshot CSV Data Endpoint
-app.post('/sftSnapshotCsv', checkToken, handleUsageFee, async (req, res) => {
-    try {
-        const { collectionTicker, editions, includeSmartContracts } = req.body;
+    console.log(`Fetching owners for ESDT: ${token}`);
 
-        if (!collectionTicker || !editions) {
-            return res.status(400).json({ error: 'Missing required parameters: collectionTicker, editions' });
+    const fetchWithRetry = async (url, retries = maxRetries, delay = 1000) => {
+        for (let attempt = 1; attempt <= retries; attempt++) {
+            try {
+                const response = await fetch(url);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                return await response.json();
+            } catch (error) {
+                console.warn(`Fetch failed (attempt ${attempt}): ${error.message}`);
+                if (attempt === retries) throw error;
+                await new Promise(resolve => setTimeout(resolve, delay * attempt)); // Exponential backoff
+            }
         }
+    };
 
-        // Convert editions input to an array (e.g., "01,02,03" -> ["01", "02", "03"])
-        const editionArray = editions.split(',').map(e => e.trim());
+    const makeBatchRequests = async () => {
+        while (true) {
+            const url = `https://api.multiversx.com/tokens/${token}/accounts?size=${batchSize}&from=${from}`;
+            console.log(`Fetching batch: ${from} - ${from + batchSize}`);
 
-        // Fetch SFT owners
-        const sftOwners = await fetchSftOwners(collectionTicker, editionArray, includeSmartContracts);
-        if (sftOwners.length === 0) {
-            return res.status(404).json({ error: 'No SFT owners found for the specified collection and editions' });
+            try {
+                const data = await fetchWithRetry(url);
+
+                if (!data || data.length === 0) break;
+
+                data.forEach(owner => {
+                    if (includeSmartContracts || (!isSmartContractAddress(owner.address) && owner.address !== "erd1deaddeaddeaddeaddeaddeaddeaddeaddeaddeaddeaddeaqtv0gag")) {
+                        owners.set(owner.address, {
+                            address: owner.address,
+                            balance: owner.balance,
+                        });
+                    }
+                });
+
+                from += batchSize;
+                totalFetched += data.length;
+
+                console.log(`Total owners fetched: ${totalFetched}`);
+
+                // API Limit: Allow a 2-second pause between batches
+                await new Promise(resolve => setTimeout(resolve, 2000));
+
+                // Stop if we reach 100k owners (to prevent excessive load)
+                if (totalFetched >= 100000) {
+                    console.warn('Reached 100,000 owners. Stopping further requests.');
+                    break;
+                }
+
+            } catch (error) {
+                console.error('Error fetching ESDT owners:', error.message);
+                throw error;
+            }
         }
+    };
 
-        // Generate CSV string for all SFT owners
-        const csvString = await generateCsv(sftOwners.map(owner => ({
-            address: owner.address,
-            balance: owner.balance,
-        })));
+    await makeBatchRequests();
 
-        // Response payload
-        res.json({
-            csvString,
-            collectionTicker,
-            includeSmartContracts,
-            message: `CSV snapshot for SFT collection "${collectionTicker}" has been generated.`,
-            usageFeeHash: req.usageFeeHash, // Attach usage fee hash
-        });
+    return Array.from(owners.values());
+};
 
-    } catch (error) {
-        console.error('Error during SFT Snapshot CSV Data:', error);
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// SFT Unique Owners Stats Endpoint
-app.post('/sftUniqueOwnersStats', checkToken, handleUsageFee, async (req, res) => {
-    try {
-        const { collectionTicker, editions, includeSmartContracts } = req.body;
-
-        if (!collectionTicker || !editions) {
-            return res.status(400).json({ error: 'Missing required parameters: collectionTicker, editions' });
-        }
-
-        // Convert editions input to an array (e.g., "01,02,03" -> ["01", "02", "03"])
-        const editionArray = editions.split(',').map(e => e.trim());
-
-        // Fetch SFT owners
-        const sftOwners = await fetchSftOwners(collectionTicker, editionArray, includeSmartContracts);
-        if (sftOwners.length === 0) {
-            return res.status(404).json({ error: 'No SFT owners found for the specified collection and editions' });
-        }
-
-        // Generate unique owner stats
-        const uniqueOwnerStats = generateUniqueOwnerStats(sftOwners, true);
-
-        // Response payload
-        res.json({
-            uniqueOwnerStats,
-            collectionTicker,
-            includeSmartContracts,
-            message: `Unique owner statistics for SFT collection "${collectionTicker}" have been generated.`,
-            usageFeeHash: req.usageFeeHash, // Attach usage fee hash
-        });
-
-    } catch (error) {
-        console.error('Error during SFT Unique Owners Stats:', error);
-        res.status(500).json({ error: error.message });
-    }
-});
 
 // ESDT Snapshot & Draw Endpoint
 app.post('/esdtSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
@@ -777,7 +771,6 @@ app.post('/esdtSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 });
-
 
 
 // Start the server
