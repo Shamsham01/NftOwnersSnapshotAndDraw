@@ -742,20 +742,26 @@ app.post('/esdtSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
 
         console.log(`Fetched ${esdtOwners.length} ESDT owners`);
 
-        // Step 3: Generate Unique Owner Stats
-        const uniqueOwnerStats = generateUniqueOwnerStats(esdtOwners, "ESDT", decimals);
+        // Step 3: Format balances using decimals
+        const formattedOwners = esdtOwners.map(owner => ({
+            address: owner.address,
+            balance: (Number(BigInt(owner.balanceRaw || 0)) / 10 ** decimals).toFixed(decimals),
+        }));
 
-        // Step 4: Randomly select winners and format their balances
+        // Step 4: Generate Unique Owner Stats
+        const uniqueOwnerStats = generateUniqueOwnerStats(formattedOwners, "ESDT", decimals);
+
+        // Step 5: Randomly select winners and format their balances
         const shuffled = formattedOwners.sort(() => 0.5 - Math.random());
         const winners = shuffled.slice(0, numberOfWinners).map(winner => ({
             address: winner.address,
-            balance: (Number(BigInt(winner.balance || 0)) / 10 ** decimals).toFixed(decimals)
+            balance: winner.balance, // Now properly formatted
         }));
 
-        // Step 5: Generate CSV Output
-        const csvString = await generateCsv(esdtOwners.map(owner => ({
+        // Step 6: Generate CSV Output
+        const csvString = await generateCsv(formattedOwners.map(owner => ({
             address: owner.address,
-            balance: (Number(owner.balance || 0) / 10 ** decimals).toFixed(decimals),
+            balance: owner.balance,
         })));
 
         res.json({
