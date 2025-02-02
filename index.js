@@ -331,25 +331,55 @@ const handleUsageFee = async (req, res, next) => {
     }
 };
 
-// Helper function to generate unique owner stats (Handles ESDT, SFT, and NFT)
-const generateUniqueOwnerStats = (data, type = "NFT", decimals = 0) => {
+// Helper function to fetch ESDT token details (including decimals)
+const fetchTokenDecimals = async (token) => {
+    try {
+        const response = await fetch(`https://api.multiversx.com/tokens/${token}`);
+        if (!response.ok) {
+            throw new Error(`Failed to fetch token details for "${token}".`);
+        }
+        const tokenData = await response.json();
+        return tokenData.decimals || 0; // Default to 0 if decimals are missing
+    } catch (error) {
+        console.error('Error fetching token decimals:', error.message);
+        throw error;
+    }
+};
+
+
+
+// Helper function to generate unique owner stats
+const generateUniqueOwnerStats = (data, assetType = "NFT", decimals = 0) => {
     const stats = {};
 
-    data.forEach(({ address, balance }) => {
-        const formattedBalance = type === "ESDT"
-            ? parseFloat((Number(balance || 0) / 10 ** decimals).toFixed(decimals)) // Correct balance formatting for ESDT
-            : 1; // NFT & SFT count as 1 per token
+    data.forEach(({ owner, address, balance }) => {
+        const account = owner || address; // Handle both NFT (owner) and SFT/ESDT (address)
 
-        if (!stats[address]) {
-            stats[address] = 0;
+        if (!account) {
+            console.warn("Skipping entry due to missing owner/address:", { owner, address });
+            return; // Skip if no valid owner
         }
-        stats[address] += formattedBalance;
+
+        if (!stats[account]) {
+            stats[account] = 0;
+        }
+
+        if (assetType === "NFT") {
+            // NFT: Each NFT counts as 1
+            stats[account] += 1;
+        } else if (assetType === "SFT") {
+            // SFT: Whole number (no decimals)
+            stats[account] += parseInt(balance || 0, 10);
+        } else if (assetType === "ESDT") {
+            // ESDT: Convert balance using dynamically fetched decimals
+            stats[account] += parseFloat((Number(balance || 0) / 10 ** decimals).toFixed(decimals));
+        }
     });
 
     return Object.entries(stats)
-        .map(([address, count]) => ({
-            owner: address,
-            tokensCount: type === "ESDT" ? parseFloat(count.toFixed(decimals)) : count,
+        .map(([account, tokensCount]) => ({
+            owner: account,
+            tokensCount: assetType === "NFT" || assetType === "SFT" ? tokensCount : tokensCount.toFixed(decimals),
         }))
         .sort((a, b) => parseFloat(b.tokensCount) - parseFloat(a.tokensCount));
 };
