@@ -733,7 +733,7 @@ app.post('/esdtSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
         const decimals = await fetchTokenDecimals(token);
         console.log(`Token Decimals: ${decimals}`);
 
-        // Step 2: Fetch Token Owners in Batches with API Throttling
+        // Step 2: Fetch Token Owners
         const esdtOwners = await fetchEsdtOwners(token, includeSmartContracts);
 
         if (esdtOwners.length === 0) {
@@ -742,16 +742,18 @@ app.post('/esdtSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
 
         console.log(`Fetched ${esdtOwners.length} ESDT owners`);
 
-        // Step 3: Format balances safely
+        // Step 3: Convert and format balances correctly
         const formattedOwners = esdtOwners.map(owner => {
-            let rawBalance = owner.balanceRaw ? BigInt(owner.balanceRaw) : BigInt(0);
-            let formattedBalance = Number(rawBalance) / Math.pow(10, decimals);
+            let rawBalance = BigInt(owner.balanceRaw || 0); // Ensure BigInt conversion
+            let formattedBalance = Number(rawBalance) / Math.pow(10, decimals); // Apply decimals correctly
 
             return {
                 address: owner.address,
-                balance: formattedBalance.toFixed(decimals), // Ensure proper decimal format
+                balance: formattedBalance.toFixed(decimals), // Ensuring balance precision
             };
         });
+
+        console.log(`Formatted balances correctly for ${formattedOwners.length} owners`);
 
         // Step 4: Generate Unique Owner Stats
         const uniqueOwnerStats = formattedOwners.reduce((acc, owner) => {
@@ -769,11 +771,13 @@ app.post('/esdtSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
 
         uniqueOwnerStatsArray.sort((a, b) => parseFloat(b.tokensCount) - parseFloat(a.tokensCount));
 
-        // Step 5: Randomly select winners
+        console.log(`Generated unique owner stats`);
+
+        // Step 5: Randomly select winners from formatted owners
         const shuffled = formattedOwners.sort(() => 0.5 - Math.random());
         const winners = shuffled.slice(0, numberOfWinners).map(winner => ({
             address: winner.address,
-            balance: winner.balance, // Ensure formatted balance is used
+            balance: winner.balance, // Correctly formatted balance
         }));
 
         // Step 6: Generate CSV Output
@@ -781,6 +785,8 @@ app.post('/esdtSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
             address: owner.address,
             balance: owner.balance,
         })));
+
+        console.log(`CSV generation completed`);
 
         res.json({
             token,
