@@ -725,6 +725,60 @@ app.post('/sftUniqueOwnersStats', checkToken, handleUsageFee, async (req, res) =
     }
 });
 
+// ESDT Snapshot & Draw Endpoint
+app.post('/esdtSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
+    try {
+        const { token, includeSmartContracts, numberOfWinners } = req.body;
+
+        if (!token || !numberOfWinners) {
+            return res.status(400).json({ error: 'Missing required parameters: token, numberOfWinners' });
+        }
+
+        console.log(`Starting ESDT snapshot for token: ${token}`);
+
+        // Step 1: Fetch Token Decimals
+        const decimals = await fetchTokenDecimals(token);
+
+        // Step 2: Fetch Token Owners in Batches with API Throttling
+        const esdtOwners = await fetchEsdtOwners(token, includeSmartContracts);
+
+        if (esdtOwners.length === 0) {
+            return res.status(404).json({ error: `No owners found for token: ${token}` });
+        }
+
+        console.log(`Fetched ${esdtOwners.length} ESDT owners`);
+
+        // Step 3: Generate Unique Owner Stats
+        const uniqueOwnerStats = generateUniqueOwnerStats(esdtOwners, "ESDT", decimals);
+
+        // Step 4: Select Random Winners
+        const shuffled = esdtOwners.sort(() => 0.5 - Math.random());
+        const winners = shuffled.slice(0, numberOfWinners);
+
+        // Step 5: Generate CSV Output
+        const csvString = await generateCsv(esdtOwners.map(owner => ({
+            address: owner.address,
+            balance: (Number(owner.balance || 0) / 10 ** decimals).toFixed(decimals),
+        })));
+
+        res.json({
+            token,
+            decimals,
+            totalOwners: esdtOwners.length,
+            uniqueOwnerStats,
+            winners,
+            csvString,
+            message: `${numberOfWinners} winners have been selected from token "${token}".`,
+            usageFeeHash: req.usageFeeHash,
+        });
+
+    } catch (error) {
+        console.error('Error during ESDT Snapshot & Draw:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+
 
 // Start the server
 app.listen(PORT, () => {
