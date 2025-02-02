@@ -331,27 +331,27 @@ const handleUsageFee = async (req, res, next) => {
     }
 };
 
-// Helper function to generate unique owner stats
-const generateUniqueOwnerStats = (data, type) => {
+// Helper function to generate unique owner stats (Handles ESDT, SFT, and NFT)
+const generateUniqueOwnerStats = (data, type = "NFT", decimals = 0) => {
     const stats = {};
 
-    data.forEach((entry) => {
-        const owner = entry.address || entry.owner; // Ensure the correct owner field is used
-        if (!owner) return;
+    data.forEach(({ address, balance }) => {
+        const formattedBalance = type === "ESDT"
+            ? parseFloat((Number(balance || 0) / 10 ** decimals).toFixed(decimals)) // Correct balance formatting for ESDT
+            : 1; // NFT & SFT count as 1 per token
 
-        const balance = type === "SFT" ? parseInt(entry.balance, 10) || 1 : 1; // Convert balance for SFTs
-        if (!stats[owner]) {
-            stats[owner] = 0;
+        if (!stats[address]) {
+            stats[address] = 0;
         }
-        stats[owner] += balance;
+        stats[address] += formattedBalance;
     });
 
     return Object.entries(stats)
-        .map(([owner, tokensCount]) => ({
-            owner,
-            tokensCount: tokensCount, // Ensure it's an integer
+        .map(([address, count]) => ({
+            owner: address,
+            tokensCount: type === "ESDT" ? parseFloat(count.toFixed(decimals)) : count,
         }))
-        .sort((a, b) => b.tokensCount - a.tokensCount); // Sort descending by token count
+        .sort((a, b) => parseFloat(b.tokensCount) - parseFloat(a.tokensCount));
 };
 
 
