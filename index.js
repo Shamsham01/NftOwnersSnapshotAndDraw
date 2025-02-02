@@ -718,7 +718,6 @@ const fetchEsdtOwners = async (token, includeSmartContracts) => {
     return Array.from(owners.values());
 };
 
-
 // ESDT Snapshot & Draw Endpoint
 app.post('/esdtSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
     try {
@@ -755,7 +754,20 @@ app.post('/esdtSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
         });
 
         // Step 4: Generate Unique Owner Stats
-        const uniqueOwnerStats = generateUniqueOwnerStats(formattedOwners, "ESDT", decimals);
+        const uniqueOwnerStats = formattedOwners.reduce((acc, owner) => {
+            if (!acc[owner.address]) {
+                acc[owner.address] = 0;
+            }
+            acc[owner.address] += parseFloat(owner.balance);
+            return acc;
+        }, {});
+
+        const uniqueOwnerStatsArray = Object.entries(uniqueOwnerStats).map(([address, balance]) => ({
+            owner: address,
+            tokensCount: balance.toFixed(decimals),
+        }));
+
+        uniqueOwnerStatsArray.sort((a, b) => parseFloat(b.tokensCount) - parseFloat(a.tokensCount));
 
         // Step 5: Randomly select winners
         const shuffled = formattedOwners.sort(() => 0.5 - Math.random());
@@ -774,7 +786,7 @@ app.post('/esdtSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
             token,
             decimals,
             totalOwners: esdtOwners.length,
-            uniqueOwnerStats,
+            uniqueOwnerStats: uniqueOwnerStatsArray,
             winners,
             csvString,
             message: `${numberOfWinners} winners have been selected from token "${token}".`,
