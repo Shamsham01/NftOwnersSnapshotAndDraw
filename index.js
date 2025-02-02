@@ -745,7 +745,7 @@ app.post('/esdtSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
         // Step 3: Format balances using decimals
         const formattedOwners = esdtOwners.map(owner => ({
             address: owner.address,
-            balance: (Number(BigInt(owner.balanceRaw || 0)) / 10 ** decimals).toFixed(decimals),
+            balance: (parseFloat(owner.balanceRaw) / Math.pow(10, decimals)).toFixed(decimals),
         }));
 
         // Step 4: Generate Unique Owner Stats
