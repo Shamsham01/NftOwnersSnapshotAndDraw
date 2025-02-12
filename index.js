@@ -772,6 +772,112 @@ app.post('/esdtSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
     }
 });
 
+// Route for staked NFTs snapshot draw
+app.post('/stakedNftsSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
+    try {
+        const { collectionTicker, contractLabel, numberOfWinners } = req.body;
+
+        // Fetch staked NFTs and their owners with filters
+        const stakedData = await fetchStakedNfts(collectionTicker, contractLabel);
+        if (stakedData.length === 0) {
+            return res.status(404).json({ error: 'No staked NFTs found for this collection' });
+        }
+
+        // Count total staked NFTs
+        const totalStakedCount = stakedData.length;
+
+        // Random selection of winners
+        const shuffled = stakedData.sort(() => 0.5 - Math.random());
+        const winners = shuffled.slice(0, numberOfWinners);
+
+        // Generate CSV string
+        const csvString = await generateCsv(stakedData);
+
+        res.json({
+            winners,
+            totalStakedCount,
+            csvString,
+            message: `${numberOfWinners} winners have been selected from staked NFTs in collection ${collectionTicker}.`,
+            usageFeeHash: req.usageFeeHash,
+        });
+
+    } catch (error) {
+        console.error('Error during stakedNftsSnapshotDraw:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Helper function to fetch staked NFTs
+const fetchStakedNfts = async (collectionTicker, contractLabel) => {
+    const contractAddresses = {
+        oneDexStakedNfts: "erd1qqqqqqqqqqqqqpgqrq6gv0ljf4y9md42pe4m6mh96hcpqnpuusls97tf33",
+        xoxnoStakedNfts: "erd1qqqqqqqqqqqqqpgqvpkd3g3uwludduv3797j54qt6c888wa59w2shntt6z",
+        artCpaStakedNfts: "erd1qqqqqqqqqqqqqpgqfken0exk7jpr85dx6f8ym3jgcagesfcqkqys0xnquf",
+        hodlFounderNfts: "erd1qqqqqqqqqqqqqpgqpvlxt3n9ks66kuq4j8cvcv25k8a5rsx99g6suw5r66",
+    };
+
+    const stakingFunctions = {
+        oneDexStakedNfts: "userStake",
+        xoxnoStakedNfts: "stake",
+        artCpaStakedNfts: "userStake",
+        hodlFounderNfts: "stake",
+    };
+
+    const contractAddress = contractAddresses[contractLabel];
+    const stakeFunction = stakingFunctions[contractLabel];
+
+    if (!contractAddress || !stakeFunction) {
+        throw new Error("Unsupported contract label or staking function");
+    }
+
+    const stakedNfts = new Map();
+    try {
+        const fetchData = async (url) => {
+            const response = await fetch(url);
+            if (!response.ok) {
+                throw new Error(`HTTP Error ${response.status}`);
+            }
+            return await response.json();
+        };
+
+        // Fetch stake and unstake transactions
+        const stakedData = await fetchData(
+            `https://api.multiversx.com/accounts/${contractAddress}/transfers?size=1000&token=${collectionTicker}&status=success&function=${stakeFunction}`
+        );
+
+        const unstakedData = await fetchData(
+            `https://api.multiversx.com/accounts/${contractAddress}/transfers?size=1000&token=${collectionTicker}&status=success&function=ESDTNFTTransfer`
+        );
+
+        // Ensure transactions are processed in chronological order
+        const allTransactions = [...stakedData, ...unstakedData].sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
+
+        allTransactions.forEach(tx => {
+            const transfers = (tx.action?.arguments?.transfers || []).filter(
+                transfer => transfer.collection === collectionTicker
+            );
+
+            transfers.forEach(item => {
+                // For staking events, add (or update) the NFT entry
+                if (tx.function === stakeFunction) {
+                    stakedNfts.set(item.identifier, {
+                        owner: tx.sender,
+                        identifier: item.identifier
+                    });
+                // For unstaking events (from the SC to a user), remove the NFT entry
+                } else if (tx.function === 'ESDTNFTTransfer' && tx.sender === contractAddress) {
+                    stakedNfts.delete(item.identifier);
+                }
+            });
+        });
+
+        return Array.from(stakedNfts.values());
+    } catch (error) {
+        console.error("Error fetching staked NFTs data:", error.message);
+        throw error;
+    }
+};
+
 
 // Start the server
 app.listen(PORT, () => {
