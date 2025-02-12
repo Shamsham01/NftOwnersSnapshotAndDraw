@@ -841,13 +841,14 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
         };
 
         // Fetch stake and unstake transactions
-        const stakedData = await fetchData(
-            `https://api.multiversx.com/accounts/${contractAddress}/transfers?size=1000&token=${collectionTicker}&status=success&function=${stakeFunction}`
-        );
+        const stakedData = (await fetchData(
+            `https://api.multiversx.com/accounts/${contractAddress}/transfers?size=1000&token=${collectionTicker}`
+        )).filter(tx => tx.status === "success");
 
-        const unstakedData = await fetchData(
-            `https://api.multiversx.com/accounts/${contractAddress}/transfers?size=1000&token=${collectionTicker}&status=success&function=ESDTNFTTransfer`
-        );
+        const unstakedData = (await fetchData(
+            `https://api.multiversx.com/accounts/${contractAddress}/transfers?size=1000&token=${collectionTicker}`
+        )).filter(tx => tx.status === "success");
+
 
         // Ensure transactions are processed in chronological order
         const allTransactions = [...stakedData, ...unstakedData].sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
