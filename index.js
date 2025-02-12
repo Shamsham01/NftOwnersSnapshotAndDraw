@@ -840,17 +840,17 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
             return await response.json();
         };
 
-        // Fetch stake and unstake transactions
+        // Fetch only **successful** stake transactions
         const stakedData = (await fetchData(
-            `https://api.multiversx.com/accounts/${contractAddress}/transfers?size=1000&token=${collectionTicker}`
+            `https://api.multiversx.com/accounts/${contractAddress}/transfers?size=1000&token=${collectionTicker}&function=${stakeFunction}`
         )).filter(tx => tx.status === "success");
 
+        // Fetch only **successful** unstake transactions
         const unstakedData = (await fetchData(
-            `https://api.multiversx.com/accounts/${contractAddress}/transfers?size=1000&token=${collectionTicker}`
+            `https://api.multiversx.com/accounts/${contractAddress}/transfers?size=1000&token=${collectionTicker}&function=ESDTNFTTransfer`
         )).filter(tx => tx.status === "success");
 
-
-        // Ensure transactions are processed in chronological order
+        // Ensure transactions are processed in **chronological order**
         const allTransactions = [...stakedData, ...unstakedData].sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
 
         allTransactions.forEach(tx => {
@@ -859,13 +859,13 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
             );
 
             transfers.forEach(item => {
-                // For staking events, add (or update) the NFT entry
+                // **Processing Staking Events**
                 if (tx.function === stakeFunction) {
                     stakedNfts.set(item.identifier, {
                         owner: tx.sender,
                         identifier: item.identifier
                     });
-                // For unstaking events (from the SC to a user), remove the NFT entry
+                // **Processing Unstaking Events** (SC sends back to user)
                 } else if (tx.function === 'ESDTNFTTransfer' && tx.sender === contractAddress) {
                     stakedNfts.delete(item.identifier);
                 }
