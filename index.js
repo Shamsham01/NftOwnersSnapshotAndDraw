@@ -842,16 +842,20 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
         };
 
         // Fetch stake and unstake transactions
-        const stakedData = (await fetchData(
+        const stakedData = await fetchData(
             `https://api.multiversx.com/accounts/${contractAddress}/transfers?size=1000&token=${collectionTicker}&status=success&function=${stakeFunction}`
-        ));
+        );
 
-        const unstakedData = (await fetchData(
+        const unstakedData = await fetchData(
             `https://api.multiversx.com/accounts/${contractAddress}/transfers?size=1000&token=${collectionTicker}&status=success&function=ESDTNFTTransfer`
-        ));
+        );
 
-        // Ensure transactions are processed in chronological order
-        const allTransactions = [...stakedData, ...unstakedData].sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
+        // Ensure unstaking is always applied last
+        const allTransactions = [...stakedData, ...unstakedData].sort((a, b) => {
+            if (a.function === "ESDTNFTTransfer" && b.function !== "ESDTNFTTransfer") return 1;
+            if (b.function === "ESDTNFTTransfer" && a.function !== "ESDTNFTTransfer") return -1;
+            return Number(a.timestamp) - Number(b.timestamp);
+        });
 
         allTransactions.forEach(tx => {
             const transfers = (tx.action?.arguments?.transfers || []).filter(
@@ -862,16 +866,11 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
                 const nftId = item.identifier;
 
                 if (tx.function === stakeFunction) {
-                    // Ensure we are not adding duplicates
                     if (!stakedNfts.has(nftId)) {
-                        stakedNfts.set(nftId, {
-                            owner: tx.sender,
-                            identifier: nftId
-                        });
+                        stakedNfts.set(nftId, { owner: tx.sender, identifier: nftId });
                         console.log(`✅ Adding staked NFT: ${nftId}`);
                     }
-                } else if (tx.function === 'ESDTNFTTransfer' && tx.sender === contractAddress) {
-                    // Ensure correct unstaking by removing NFT from the set
+                } else if (tx.function === "ESDTNFTTransfer" && tx.sender === contractAddress) {
                     if (stakedNfts.has(nftId)) {
                         stakedNfts.delete(nftId);
                         console.log(`❌ Removing unstaked NFT: ${nftId}`);
@@ -886,6 +885,7 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
         throw error;
     }
 };
+
 
 
 // Start the server
