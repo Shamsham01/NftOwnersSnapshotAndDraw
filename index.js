@@ -844,11 +844,11 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
 
         // Fetch transactions
         const stakeData = await fetchData(
-            `https://api.multiversx.com/accounts/${contractAddress}/transfers?size=1000&token=${collectionTicker}&function=${stakeFunction}`
+            `https://api.multiversx.com/accounts/${contractAddress}/transfers?size=1000&function=${stakeFunction}`
         );
 
         const unstakeData = await fetchData(
-            `https://api.multiversx.com/accounts/${contractAddress}/transfers?size=1000&token=${collectionTicker}&function=ESDTNFTTransfer`
+            `https://api.multiversx.com/accounts/${contractAddress}/transfers?size=1000&function=ESDTNFTTransfer`
         );
 
         // **Filter out failed transactions**
@@ -869,25 +869,25 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
             const txHash = tx.txHash;
             const sender = tx.sender;
 
-            const transfers = (tx.action?.arguments?.transfers || []).filter(
-                transfer => transfer.collection === collectionTicker
-            );
+            // Get all NFT transfers in the transaction
+            const transfers = tx.action?.arguments?.transfers || [];
 
             transfers.forEach(item => {
                 const nftId = item.identifier;
+                const nftCollection = item.collection; // Capture NFT collection name
 
                 if (functionName === stakeFunction) {
                     // Staking event: add to tracking map
                     nftState.set(nftId, "staked");
                     console.log(
-                        `✅ [${timestamp}] [STAKE] TX hash: ${txHash}, NFT: ${nftId}, Wallet: ${sender}`
+                        `✅ [${timestamp}] [STAKE] TX hash: ${txHash}, NFT: ${nftCollection}-${nftId}, Wallet: ${sender}`
                     );
                 } else if (functionName === "ESDTNFTTransfer") {
                     // Unstaking event: mark NFT as unstaked
                     if (nftState.has(nftId)) {
                         nftState.set(nftId, "unstaked");
                         console.log(
-                            `❌ [${timestamp}] [UNSTAKE] TX hash: ${txHash}, NFT: ${nftId}, Wallet: ${sender}`
+                            `❌ [${timestamp}] [UNSTAKE] TX hash: ${txHash}, NFT: ${nftCollection}-${nftId}, Wallet: ${sender}`
                         );
                     }
                 }
