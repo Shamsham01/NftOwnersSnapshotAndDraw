@@ -864,6 +864,9 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
 
         allTransactions.forEach(tx => {
             const functionName = tx.function;  // Determines stake/unstake action
+            const timestamp = new Date(tx.timestamp * 1000).toISOString();
+            const txHash = tx.txHash;
+            const sender = tx.sender;
 
             const transfers = (tx.action?.arguments?.transfers || []).filter(
                 transfer => transfer.collection === collectionTicker
@@ -875,12 +878,16 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
                 if (functionName === stakeFunction) {
                     // Staking event: add to tracking map
                     nftState.set(nftId, "staked");
-                    console.log(`✅ Adding staked NFT: ${nftId}`);
+                    console.log(
+                        `✅ [${timestamp}] [STAKE] NFT: ${nftId}, Wallet: ${sender}, Tx: ${txHash}`
+                    );
                 } else if (functionName === "ESDTNFTTransfer") {
                     // Unstaking event: mark NFT as unstaked
                     if (nftState.has(nftId)) {
                         nftState.set(nftId, "unstaked");
-                        console.log(`❌ Removing unstaked NFT: ${nftId}`);
+                        console.log(
+                            `❌ [${timestamp}] [UNSTAKE] NFT: ${nftId}, Wallet: ${sender}, Tx: ${txHash}`
+                        );
                     }
                 }
             });
@@ -899,7 +906,6 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
         throw error;
     }
 };
-
 
 
 // Start the server
