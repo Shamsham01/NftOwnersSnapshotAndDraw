@@ -837,18 +837,33 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
             if (!response.ok) {
                 throw new Error(`HTTP Error ${response.status}`);
             }
-            return await response.json();
+            const data = await response.json();
+            
+            // 🔴 Log first few transactions from raw API response (before filtering)
+            console.log(`Fetched transactions from ${url}:`, JSON.stringify(data.slice(0, 5), null, 2));
+            
+            return data;
         };
 
         // Fetch only **successful** stake transactions
         const stakedData = (await fetchData(
             `https://api.multiversx.com/accounts/${contractAddress}/transfers?size=1000&token=${collectionTicker}&function=${stakeFunction}`
-        )).filter(tx => tx.status === "success");
+        )).filter(tx => {
+            if (tx.status !== "success") {
+                console.log(`⚠️ Skipping failed stake transaction:`, tx);
+            }
+            return tx.status === "success";
+        });
 
         // Fetch only **successful** unstake transactions
         const unstakedData = (await fetchData(
             `https://api.multiversx.com/accounts/${contractAddress}/transfers?size=1000&token=${collectionTicker}&function=ESDTNFTTransfer`
-        )).filter(tx => tx.status === "success");
+        )).filter(tx => {
+            if (tx.status !== "success") {
+                console.log(`⚠️ Skipping failed unstake transaction:`, tx);
+            }
+            return tx.status === "success";
+        });
 
         // Ensure transactions are processed in **chronological order**
         const allTransactions = [...stakedData, ...unstakedData].sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
