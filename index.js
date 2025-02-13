@@ -772,6 +772,7 @@ app.post('/esdtSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
     }
 });
 
+
 // Route for staked NFTs snapshot draw
 app.post('/stakedNftsSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
     try {
@@ -879,14 +880,14 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
                     // Staking event: add to tracking map
                     nftState.set(nftId, "staked");
                     console.log(
-                        `✅ [${timestamp}] [STAKE] NFT: ${nftId}, Wallet: ${sender}, Tx: ${txHash}`
+                        `✅ [${timestamp}] [STAKE] TX hash: ${txHash}, NFT: ${nftId}, Wallet: ${sender}`
                     );
                 } else if (functionName === "ESDTNFTTransfer") {
                     // Unstaking event: mark NFT as unstaked
                     if (nftState.has(nftId)) {
                         nftState.set(nftId, "unstaked");
                         console.log(
-                            `❌ [${timestamp}] [UNSTAKE] NFT: ${nftId}, Wallet: ${sender}, Tx: ${txHash}`
+                            `❌ [${timestamp}] [UNSTAKE] TX hash: ${txHash}, NFT: ${nftId}, Wallet: ${sender}`
                         );
                     }
                 }
@@ -906,6 +907,7 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
         throw error;
     }
 };
+
 
 
 // Start the server
