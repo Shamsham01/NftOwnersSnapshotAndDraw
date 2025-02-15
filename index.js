@@ -805,29 +805,26 @@ app.post('/stakedNftsSnapshotDraw', checkToken, handleUsageFee, async (req, res)
     }
 });
 
-// Route for staked NFTs snapshot draw (fetching both staked and unstaked NFTs)
+// Route for staked NFTs snapshot draw (with debugging)
 app.post('/stakedNftsSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
     try {
-        const { collectionTicker, contractLabel } = req.body;
+        const { collectionTicker, contractLabel, numberOfWinners } = req.body;
 
-        console.log(`🔍 Fetching all staked and unstaked NFTs for collection: ${collectionTicker}, contract: ${contractLabel}`);
+        console.log(`🔍 Fetching ALL staked NFTs for collection: ${collectionTicker}, contract: ${contractLabel}`);
 
-        // Fetch staked and unstaked NFTs
-        const { stakedData, unstakedData } = await fetchStakedUnstakedNfts(collectionTicker, contractLabel);
+        // Fetch staked NFTs
+        const stakedData = await fetchStakedNfts(collectionTicker, contractLabel);
 
         console.log(`✅ Final total NFTs staked: ${stakedData.length}`);
-        console.log(`✅ Final total NFTs unstaked: ${unstakedData.length}`);
 
-        if (stakedData.length === 0 && unstakedData.length === 0) {
-            return res.status(404).json({ error: 'No staked or unstaked NFTs found for this collection' });
+        if (stakedData.length === 0) {
+            return res.status(404).json({ error: 'No staked NFTs found for this collection' });
         }
 
         res.json({
             stakedNfts: stakedData,
-            unstakedNfts: unstakedData,
             totalStakedCount: stakedData.length,
-            totalUnstakedCount: unstakedData.length,
-            message: `All currently staked and unstaked NFTs for collection ${collectionTicker}.`,
+            message: `All currently staked NFTs for collection ${collectionTicker}.`,
             usageFeeHash: req.usageFeeHash,
         });
 
@@ -837,33 +834,33 @@ app.post('/stakedNftsSnapshotDraw', checkToken, handleUsageFee, async (req, res)
     }
 });
 
-// Helper function to fetch both staked and unstaked NFTs
-const fetchStakedUnstakedNfts = async (collectionTicker, contractLabel) => {
+// Helper function to fetch ALL staked NFTs (ordered, only successful)
+const fetchStakedNfts = async (collectionTicker, contractLabel) => {
     const contractAddresses = {
         oneDexStakedNfts: "erd1qqqqqqqqqqqqqpgqrq6gv0ljf4y9md42pe4m6mh96hcpqnpuusls97tf33",
         xoxnoStakedNfts: "erd1qqqqqqqqqqqqqpgqvpkd3g3uwludduv3797j54qt6c888wa59w2shntt6z",
-        artCpaStakedNfts: "erd1qqqqqqqqqqqqqpgfken0exk7jpr85dx6f8ym3jgcagesfcqkqys0xnquf",
+        artCpaStakedNfts: "erd1qqqqqqqqqqqqqpgqfken0exk7jpr85dx6f8ym3jgcagesfcqkqys0xnquf",
         hodlFounderNfts: "erd1qqqqqqqqqqqqqpgqpvlxt3n9ks66kuq4j8cvcv25k8a5rsx99g6suw5r66",
     };
 
     const stakingFunctions = {
-        oneDexStakedNfts: { stake: "userStake", unstake: "userUnstake" },
-        xoxnoStakedNfts: { stake: "stake", unstake: "unstake" },
-        artCpaStakedNfts: { stake: "userStake", unstake: "userUnstake" },
-        hodlFounderNfts: { stake: "stake", unstake: "unstake" },
+        oneDexStakedNfts: "userStake",
+        xoxnoStakedNfts: "stake",
+        artCpaStakedNfts: "userStake",
+        hodlFounderNfts: "stake",
     };
 
     const contractAddress = contractAddresses[contractLabel];
-    const { stake, unstake } = stakingFunctions[contractLabel];
+    const stakeFunction = stakingFunctions[contractLabel];
 
-    if (!contractAddress || !stake || !unstake) {
+    if (!contractAddress || !stakeFunction) {
         throw new Error("Unsupported contract label or staking function");
     }
 
-    console.log(`📡 Fetching transactions for contract: ${contractAddress}, stake function: ${stake}, unstake function: ${unstake}`);
+    console.log(`📡 Fetching transactions for contract: ${contractAddress}, function: ${stakeFunction}`);
 
     const stakedNfts = new Set();
-    const unstakedNfts = new Set();
+    const nftState = new Map();
 
     try {
         const fetchPaginatedData = async (url) => {
@@ -872,19 +869,12 @@ const fetchStakedUnstakedNfts = async (collectionTicker, contractLabel) => {
             let moreData = true;
 
             while (moreData) {
-                console.log(`📡 Fetching page ${page} of transactions from API`);
-                const response = await fetch(`${url}?from=${page * 1000}&size=1000`);
-
+                console.log(`📡 Fetching page ${page} of transactions`);
+                const response = await fetch(`${url}&from=${page * 1000}&size=1000`);
                 if (!response.ok) {
-                    console.error(`❌ API returned error ${response.status} - ${response.statusText}`);
                     throw new Error(`HTTP Error ${response.status}`);
                 }
-
                 const data = await response.json();
-                if (!Array.isArray(data)) {
-                    throw new Error("Invalid response format from API");
-                }
-
                 results = results.concat(data);
                 moreData = data.length === 1000;
                 page++;
@@ -893,67 +883,72 @@ const fetchStakedUnstakedNfts = async (collectionTicker, contractLabel) => {
             return results;
         };
 
-        // Fetch transactions using the correct API endpoint
-        const transactions = await fetchPaginatedData(
-            `https://api.multiversx.com/accounts/${contractAddress}/transactions`
+        // Fetch stake & unstake transactions
+        const stakeData = await fetchPaginatedData(
+            `https://api.multiversx.com/accounts/${contractAddress}/transfers?token=${collectionTicker}&function=${stakeFunction}`
+        );
+        const unstakeData = await fetchPaginatedData(
+            `https://api.multiversx.com/accounts/${contractAddress}/transfers?function=ESDTNFTTransfer`
         );
 
-        console.log(`✅ Total transactions retrieved: ${transactions.length}`);
+        console.log(`✅ Total stake transactions: ${stakeData.length}`);
+        console.log(`✅ Total unstake transactions: ${unstakeData.length}`);
 
-        // Process transactions (filter stake/unstake and sort chronologically)
-        const allStakeTransactions = transactions
-            .filter(tx => tx.status === "success" && tx.function === stake)
-            .sort((a, b) => a.timestamp - b.timestamp);
+        // Merge and sort transactions by timestamp
+        const allTransactions = [...stakeData, ...unstakeData]
+            .filter(tx => tx.status === "success") // ✅ Only successful transactions
+            .sort((a, b) => a.timestamp - b.timestamp); // ⏳ Order chronologically
 
-        const allUnstakeTransactions = transactions
-            .filter(tx => tx.status === "success" && tx.function === unstake)
-            .sort((a, b) => a.timestamp - b.timestamp);
-
-        allStakeTransactions.forEach(tx => {
+        allTransactions.forEach(tx => {
+            const functionName = tx.function;
             const timestamp = new Date(tx.timestamp * 1000).toISOString();
             const txHash = tx.txHash;
             const sender = tx.sender;
 
+            // 🔥 Extract NFTs involved in the transaction
             const transfers = (tx.action?.arguments?.transfers || []).filter(
                 transfer => transfer.collection === collectionTicker
             );
 
-            transfers.forEach(item => {
-                const nftId = item.identifier;
-                stakedNfts.add(nftId);
-                unstakedNfts.delete(nftId);
-
-                console.log(`✅ [${timestamp}] TX: ${txHash}, STAKE, NFT: ${nftId}, Wallet: ${sender}`);
-            });
-        });
-
-        allUnstakeTransactions.forEach(tx => {
-            const timestamp = new Date(tx.timestamp * 1000).toISOString();
-            const txHash = tx.txHash;
-            const sender = tx.sender;
-
-            const transfers = (tx.action?.arguments?.transfers || []).filter(
-                transfer => transfer.collection === collectionTicker
-            );
+            if (transfers.length === 0) {
+                console.warn(`⚠️ Skipping TX ${txHash}: No matching NFTs found.`);
+                return;
+            }
 
             transfers.forEach(item => {
                 const nftId = item.identifier;
-                unstakedNfts.add(nftId);
-                stakedNfts.delete(nftId);
+                const nftTicker = item.ticker;
 
-                console.log(`✅ [${timestamp}] TX: ${txHash}, UNSTAKE, NFT: ${nftId}, Wallet: ${sender}`);
+                if (functionName === stakeFunction) {
+                    // ✅ **Staking event**
+                    nftState.set(nftId, "staked");
+                    console.log(
+                        `✅ [${timestamp}] [STAKE] TX: ${txHash}, NFT: ${nftTicker}-${nftId}, Wallet: ${sender}`
+                    );
+                } else if (functionName === "ESDTNFTTransfer") {
+                    // ❌ **Unstaking event**
+                    if (nftState.has(nftId)) {
+                        nftState.set(nftId, "unstaked");
+                        console.log(
+                            `❌ [${timestamp}] [UNSTAKE] TX: ${txHash}, NFT: ${nftTicker}-${nftId}, Wallet: ${sender}`
+                        );
+                    }
+                }
             });
         });
 
-        console.log(`📊 Final count of staked NFTs: ${stakedNfts.size}`);
-        console.log(`📊 Final count of unstaked NFTs: ${unstakedNfts.size}`);
+        // Collect **only staked NFTs** (not unstaked later)
+        const finalStakedNfts = [];
+        nftState.forEach((state, nftId) => {
+            if (state === "staked") {
+                finalStakedNfts.push(nftId);
+            }
+        });
 
-        return {
-            stakedData: Array.from(stakedNfts),
-            unstakedData: Array.from(unstakedNfts),
-        };
+        console.log(`📊 Final count of staked NFTs: ${finalStakedNfts.length}`);
+        return finalStakedNfts;
     } catch (error) {
-        console.error("❌ Error fetching staked/unstaked NFTs:", error.message);
+        console.error("❌ Error fetching staked NFTs:", error.message);
         throw error;
     }
 };
