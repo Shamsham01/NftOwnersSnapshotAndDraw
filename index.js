@@ -778,7 +778,7 @@ app.post('/stakedNftsSnapshotDraw', checkToken, handleUsageFee, async (req, res)
     try {
         const { collectionTicker, contractLabel, numberOfWinners } = req.body;
 
-        // Fetch staked NFTs and their owners with filters
+        // Fetch staked NFTs and their owners
         const stakedData = await fetchStakedNfts(collectionTicker, contractLabel);
         if (stakedData.length === 0) {
             return res.status(404).json({ error: 'No staked NFTs found for this collection' });
@@ -808,7 +808,7 @@ app.post('/stakedNftsSnapshotDraw', checkToken, handleUsageFee, async (req, res)
     }
 });
 
-// Helper function to fetch staked NFTs
+// Helper function to fetch all staked NFTs (with proper filtering)
 const fetchStakedNfts = async (collectionTicker, contractLabel) => {
     const contractAddresses = {
         oneDexStakedNfts: "erd1qqqqqqqqqqqqqpgqrq6gv0ljf4y9md42pe4m6mh96hcpqnpuusls97tf33",
@@ -831,37 +831,34 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
         throw new Error("Unsupported contract label or staking function");
     }
 
-    const stakedNfts = new Map(); // Use Map to track NFT staking states
+    const stakedNfts = new Set();
+    const nftState = new Map();
 
     try {
         const fetchPaginatedData = async (url) => {
             let page = 0;
-            let allData = [];
-            let morePages = true;
+            let results = [];
+            let moreData = true;
 
-            while (morePages) {
+            while (moreData) {
                 const response = await fetch(`${url}&from=${page * 1000}&size=1000`);
                 if (!response.ok) {
                     throw new Error(`HTTP Error ${response.status}`);
                 }
                 const data = await response.json();
-                allData = allData.concat(data);
-
-                if (data.length < 1000) {
-                    morePages = false; // Stop if we receive less than 1000 results
-                } else {
-                    page++;
-                }
+                results = results.concat(data);
+                moreData = data.length === 1000;
+                page++;
             }
-            return allData;
+
+            return results;
         };
 
-        // Fetch all staking transactions
+        // Fetch transactions (paginated)
         const stakeData = await fetchPaginatedData(
-            `https://api.multiversx.com/accounts/${contractAddress}/transfers?function=${stakeFunction}`
+            `https://api.multiversx.com/accounts/${contractAddress}/transfers?token=${collectionTicker}&function=${stakeFunction}`
         );
 
-        // Fetch all unstaking transactions
         const unstakeData = await fetchPaginatedData(
             `https://api.multiversx.com/accounts/${contractAddress}/transfers?function=ESDTNFTTransfer`
         );
@@ -881,39 +878,40 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
             const txHash = tx.txHash;
             const sender = tx.sender;
 
-            // Get all NFT transfers in the transaction
-            const transfers = tx.action?.arguments?.transfers || [];
+            // Extract NFT transfers related to the requested collection
+            const transfers = (tx.action?.arguments?.transfers || []).filter(
+                transfer => transfer.collection === collectionTicker
+            );
 
             transfers.forEach(item => {
                 const nftId = item.identifier;
-                const nftCollection = item.collection; // Capture NFT collection name
 
-                if (nftCollection === collectionTicker) { // Only process requested collection
-                    if (functionName === stakeFunction) {
-                        // Staking event: add to tracking map
-                        stakedNfts.set(nftId, { txHash, wallet: sender, status: "staked" });
+                if (functionName === stakeFunction) {
+                    // Staking event: add to tracking map
+                    nftState.set(nftId, "staked");
+                    console.log(
+                        `✅ [${timestamp}] [STAKE] TX hash: ${txHash}, NFT: ${nftId}, Wallet: ${sender}`
+                    );
+                } else if (functionName === "ESDTNFTTransfer") {
+                    // Unstaking event: mark NFT as unstaked
+                    if (nftState.has(nftId)) {
+                        nftState.set(nftId, "unstaked");
                         console.log(
-                            `✅ [${timestamp}] [STAKE] TX: ${txHash}, NFT: ${nftCollection}-${nftId}, Wallet: ${sender}`
+                            `❌ [${timestamp}] [UNSTAKE] TX hash: ${txHash}, NFT: ${nftId}, Wallet: ${sender}`
                         );
-                    } else if (functionName === "ESDTNFTTransfer") {
-                        // Unstaking event: mark NFT as unstaked
-                        if (stakedNfts.has(nftId)) {
-                            stakedNfts.set(nftId, { txHash, wallet: sender, status: "unstaked" });
-                            console.log(
-                                `❌ [${timestamp}] [UNSTAKE] TX: ${txHash}, NFT: ${nftCollection}-${nftId}, Wallet: ${sender}`
-                            );
-                        }
                     }
                 }
             });
         });
 
-        // Collect only NFTs that are still staked
-        const finalStakedNfts = Array.from(stakedNfts.entries())
-            .filter(([_, data]) => data.status === "staked")
-            .map(([nftId]) => nftId);
+        // Collect all NFTs that are still staked (not unstaked later)
+        nftState.forEach((state, nftId) => {
+            if (state === "staked") {
+                stakedNfts.add(nftId);
+            }
+        });
 
-        return finalStakedNfts;
+        return Array.from(stakedNfts);
     } catch (error) {
         console.error("Error fetching staked NFTs data:", error.message);
         throw error;
