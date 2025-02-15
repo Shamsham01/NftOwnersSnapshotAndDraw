@@ -805,6 +805,38 @@ app.post('/stakedNftsSnapshotDraw', checkToken, handleUsageFee, async (req, res)
     }
 });
 
+// Route for staked NFTs snapshot draw (fetching both staked and unstaked NFTs)
+app.post('/stakedNftsSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
+    try {
+        const { collectionTicker, contractLabel } = req.body;
+
+        console.log(`🔍 Fetching all staked and unstaked NFTs for collection: ${collectionTicker}, contract: ${contractLabel}`);
+
+        // Fetch staked and unstaked NFTs
+        const { stakedData, unstakedData } = await fetchStakedUnstakedNfts(collectionTicker, contractLabel);
+
+        console.log(`✅ Final total NFTs staked: ${stakedData.length}`);
+        console.log(`✅ Final total NFTs unstaked: ${unstakedData.length}`);
+
+        if (stakedData.length === 0 && unstakedData.length === 0) {
+            return res.status(404).json({ error: 'No staked or unstaked NFTs found for this collection' });
+        }
+
+        res.json({
+            stakedNfts: stakedData,
+            unstakedNfts: unstakedData,
+            totalStakedCount: stakedData.length,
+            totalUnstakedCount: unstakedData.length,
+            message: `All currently staked and unstaked NFTs for collection ${collectionTicker}.`,
+            usageFeeHash: req.usageFeeHash,
+        });
+
+    } catch (error) {
+        console.error('❌ Error during stakedNftsSnapshotDraw:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // Helper function to fetch both staked and unstaked NFTs
 const fetchStakedUnstakedNfts = async (collectionTicker, contractLabel) => {
     const contractAddresses = {
@@ -840,12 +872,19 @@ const fetchStakedUnstakedNfts = async (collectionTicker, contractLabel) => {
             let moreData = true;
 
             while (moreData) {
-                console.log(`📡 Fetching page ${page} of transactions`);
-                const response = await fetch(`${url}&from=${page * 1000}&size=1000`);
+                console.log(`📡 Fetching page ${page} of transactions from API`);
+                const response = await fetch(`${url}?from=${page * 1000}&size=1000`);
+
                 if (!response.ok) {
+                    console.error(`❌ API returned error ${response.status} - ${response.statusText}`);
                     throw new Error(`HTTP Error ${response.status}`);
                 }
+
                 const data = await response.json();
+                if (!Array.isArray(data)) {
+                    throw new Error("Invalid response format from API");
+                }
+
                 results = results.concat(data);
                 moreData = data.length === 1000;
                 page++;
@@ -854,20 +893,20 @@ const fetchStakedUnstakedNfts = async (collectionTicker, contractLabel) => {
             return results;
         };
 
-        // Fetch only stake and unstake transactions
-        const stakeData = await fetchPaginatedData(
-            `https://api.multiversx.com/accounts/${contractAddress}/transfers?token=${collectionTicker}&function=${stake}`
-        );
-        const unstakeData = await fetchPaginatedData(
-            `https://api.multiversx.com/accounts/${contractAddress}/transfers?token=${collectionTicker}&function=${unstake}`
+        // Fetch transactions using the correct API endpoint
+        const transactions = await fetchPaginatedData(
+            `https://api.multiversx.com/accounts/${contractAddress}/transactions`
         );
 
-        console.log(`✅ Total stake transactions: ${stakeData.length}`);
-        console.log(`✅ Total unstake transactions: ${unstakeData.length}`);
+        console.log(`✅ Total transactions retrieved: ${transactions.length}`);
 
-        // Process stake transactions
-        const allStakeTransactions = stakeData
-            .filter(tx => tx.status === "success")
+        // Process transactions (filter stake/unstake and sort chronologically)
+        const allStakeTransactions = transactions
+            .filter(tx => tx.status === "success" && tx.function === stake)
+            .sort((a, b) => a.timestamp - b.timestamp);
+
+        const allUnstakeTransactions = transactions
+            .filter(tx => tx.status === "success" && tx.function === unstake)
             .sort((a, b) => a.timestamp - b.timestamp);
 
         allStakeTransactions.forEach(tx => {
@@ -882,16 +921,11 @@ const fetchStakedUnstakedNfts = async (collectionTicker, contractLabel) => {
             transfers.forEach(item => {
                 const nftId = item.identifier;
                 stakedNfts.add(nftId);
-                unstakedNfts.delete(nftId); // Remove from unstaked if it appears again
+                unstakedNfts.delete(nftId);
 
                 console.log(`✅ [${timestamp}] TX: ${txHash}, STAKE, NFT: ${nftId}, Wallet: ${sender}`);
             });
         });
-
-        // Process unstake transactions
-        const allUnstakeTransactions = unstakeData
-            .filter(tx => tx.status === "success")
-            .sort((a, b) => a.timestamp - b.timestamp);
 
         allUnstakeTransactions.forEach(tx => {
             const timestamp = new Date(tx.timestamp * 1000).toISOString();
@@ -905,7 +939,7 @@ const fetchStakedUnstakedNfts = async (collectionTicker, contractLabel) => {
             transfers.forEach(item => {
                 const nftId = item.identifier;
                 unstakedNfts.add(nftId);
-                stakedNfts.delete(nftId); // Remove from staked if unstaked
+                stakedNfts.delete(nftId);
 
                 console.log(`✅ [${timestamp}] TX: ${txHash}, UNSTAKE, NFT: ${nftId}, Wallet: ${sender}`);
             });
