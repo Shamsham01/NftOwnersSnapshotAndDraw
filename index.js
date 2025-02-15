@@ -773,8 +773,8 @@ app.post('/esdtSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
 });
 
 
-// Route for staked and unstaked NFTs snapshot draw (simplified logging)
-app.post('/stakedUnstakedNftsSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
+// Route for staked NFTs snapshot draw (now includes unstaked NFTs)
+app.post('/stakedNftsSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
     try {
         const { collectionTicker, contractLabel } = req.body;
 
@@ -800,7 +800,7 @@ app.post('/stakedUnstakedNftsSnapshotDraw', checkToken, handleUsageFee, async (r
         });
 
     } catch (error) {
-        console.error('❌ Error during stakedUnstakedNftsSnapshotDraw:', error);
+        console.error('❌ Error during stakedNftsSnapshotDraw:', error);
         res.status(500).json({ error: error.message });
     }
 });
@@ -810,7 +810,7 @@ const fetchStakedUnstakedNfts = async (collectionTicker, contractLabel) => {
     const contractAddresses = {
         oneDexStakedNfts: "erd1qqqqqqqqqqqqqpgqrq6gv0ljf4y9md42pe4m6mh96hcpqnpuusls97tf33",
         xoxnoStakedNfts: "erd1qqqqqqqqqqqqqpgqvpkd3g3uwludduv3797j54qt6c888wa59w2shntt6z",
-        artCpaStakedNfts: "erd1qqqqqqqqqqqqqpgqfken0exk7jpr85dx6f8ym3jgcagesfcqkqys0xnquf",
+        artCpaStakedNfts: "erd1qqqqqqqqqqqqqpgfken0exk7jpr85dx6f8ym3jgcagesfcqkqys0xnquf",
         hodlFounderNfts: "erd1qqqqqqqqqqqqqpgqpvlxt3n9ks66kuq4j8cvcv25k8a5rsx99g6suw5r66",
     };
 
