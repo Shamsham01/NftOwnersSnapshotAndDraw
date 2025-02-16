@@ -810,16 +810,23 @@ const fetchAllTransactions = async (baseUrl) => {
   return deduplicateTransactions(allTransactions);
 };
 
-// Helper function to check if an NFT is still staked (i.e. its owner is the expected smart contract address)
+// Helper function to check if an NFT is currently staked.
+// Logs detailed info when the NFT is not validated.
 const isNftCurrentlyStaked = async (nftIdentifier, expectedSCAddress) => {
-  const response = await fetch(`https://api.elrond.com/nfts/${nftIdentifier}/accounts`);
+  const url = `https://api.elrond.com/nfts/${nftIdentifier}/accounts`;
+  const response = await fetch(url);
   if (!response.ok) {
     console.error(`Failed to fetch NFT ${nftIdentifier} status`);
     return false;
   }
   const data = await response.json();
-  // Return true if one of the accounts matches the expected smart contract address with a balance > 0.
-  return data.some(account => account.address === expectedSCAddress && Number(account.balance) > 0);
+  const found = data.some(account => account.address === expectedSCAddress && Number(account.balance) > 0);
+  if (!found) {
+    console.log(`NFT ${nftIdentifier} is not staked as expected. Accounts returned: ${JSON.stringify(data)}`);
+  } else {
+    console.log(`NFT ${nftIdentifier} is validly staked with account ${expectedSCAddress}`);
+  }
+  return found;
 };
 
 // Helper function to fetch staked NFTs using only staking events,
@@ -848,18 +855,18 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
 
   const stakedNfts = new Map();
   try {
-    // Build the base URL for fetching transactions (pagination is handled below)
+    // Build the base URL for fetching transactions (pagination is handled)
     const baseUrl = `https://api.multiversx.com/accounts/${contractAddress}/transfers?size=1000&token=${collectionTicker}`;
     const allTransactions = await fetchAllTransactions(baseUrl);
 
-    // Filter only successful transactions and sort them in chronological order (oldest first)
+    // Filter only successful transactions and sort them chronologically (oldest first)
     const successfulTxs = allTransactions
       .filter(tx => tx.status === "success")
       .sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
 
-    // Process staking events only (ignoring unstaking events entirely)
+    // Process only staking events (ignore unstaking events entirely)
     successfulTxs.forEach(tx => {
-      // Process only transfers relevant to the specified NFT collection
+      // Process transfers relevant to the specified NFT collection
       const transfers = (tx.action?.arguments?.transfers || []).filter(
         transfer => transfer.collection === collectionTicker
       );
