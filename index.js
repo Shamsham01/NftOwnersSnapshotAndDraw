@@ -773,11 +773,29 @@ app.post('/esdtSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
 });
 
 
+// Helper: Async Pool - limits concurrency of async tasks.
+async function asyncPool(poolLimit, array, iteratorFn) {
+  const ret = [];
+  const executing = [];
+  for (const item of array) {
+    const p = Promise.resolve().then(() => iteratorFn(item));
+    ret.push(p);
+    if (poolLimit <= array.length) {
+      const e = p.then(() => executing.splice(executing.indexOf(e), 1));
+      executing.push(e);
+      if (executing.length >= poolLimit) {
+        await Promise.race(executing);
+      }
+    }
+  }
+  return Promise.all(ret);
+}
+
 // Helper function to deduplicate transactions by their unique hash.
 const deduplicateTransactions = (transactions) => {
   const uniqueTxMap = new Map();
   transactions.forEach(tx => {
-    // Use tx.hash if available; otherwise use another unique property (like nonce) as fallback.
+    // Use tx.hash if available; otherwise, use a fallback (like tx.nonce)
     const key = tx.hash || tx.nonce;
     uniqueTxMap.set(key, tx);
   });
@@ -798,11 +816,10 @@ const fetchAllTransactions = async (baseUrl) => {
       throw new Error(`HTTP error ${response.status}`);
     }
     const result = await response.json();
-    // The API response may have the transactions in result.data or directly as an array.
     const transactions = result.data || result;
     console.log(`Fetched ${transactions.length} transactions from ${url}`);
     allTransactions.push(...transactions);
-    nextCursor = result.cursor; // Will be undefined or null if no further pages.
+    nextCursor = result.cursor; // Will be undefined/null if no further pages.
   } while (nextCursor);
   console.log(`Total transactions fetched: ${allTransactions.length}`);
   return deduplicateTransactions(allTransactions);
@@ -856,12 +873,12 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
     // Build the base URL for fetching transactions.
     const baseUrl = `https://api.multiversx.com/accounts/${contractAddress}/transfers?size=1000&token=${collectionTicker}`;
     const allTransactions = await fetchAllTransactions(baseUrl);
+    console.log(`Total successful transactions: ${allTransactions.filter(tx => tx.status === "success").length}`);
     
     // Filter for successful transactions and sort them chronologically (oldest first).
     const successfulTxs = allTransactions
       .filter(tx => tx.status === "success")
       .sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
-    console.log(`Total successful transactions: ${successfulTxs.length}`);
     
     // Iterate through each transaction and capture NFT identifiers from staking events.
     successfulTxs.forEach(tx => {
@@ -884,15 +901,13 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
       });
     });
     console.log(`📊 Collected staked NFT count before validation: ${stakedNfts.size}`);
-    
-    // Validate each NFT by calling the Elrond API.
+
+    // Validate each NFT by calling the Elrond API using our concurrency-limited asyncPool.
     const stakedArray = Array.from(stakedNfts.values());
-    const validatedResults = await Promise.all(
-      stakedArray.map(async nft => {
-        const valid = await isNftCurrentlyStaked(nft.identifier, contractAddress);
-        return valid ? nft : null;
-      })
-    );
+    const validatedResults = await asyncPool(4, stakedArray, async (nft) => {
+      const valid = await isNftCurrentlyStaked(nft.identifier, contractAddress);
+      return valid ? nft : null;
+    });
     const finalStakedNfts = validatedResults.filter(nft => nft !== null);
     console.log(`📊 Final validated staked NFT count: ${finalStakedNfts.length}`);
     return finalStakedNfts;
