@@ -852,7 +852,10 @@ const isNftCurrentlyStaked = async (nftIdentifier, expectedSCAddress) => {
   const url = `https://api.elrond.com/nfts/${nftIdentifier}/accounts`;
   const response = await fetchWithRetry(url);
   const data = await response.json();
-  const found = data.some(account => account.address.toLowerCase().trim() === expectedSCAddress.toLowerCase().trim() && Number(account.balance) > 0);
+  const found = data.some(account =>
+    account.address.toLowerCase().trim() === expectedSCAddress.toLowerCase().trim() &&
+    Number(account.balance) > 0
+  );
   if (!found) {
     console.log(`NFT ${nftIdentifier} is NOT staked as expected. Accounts returned: ${JSON.stringify(data)}`);
   } else {
@@ -861,9 +864,9 @@ const isNftCurrentlyStaked = async (nftIdentifier, expectedSCAddress) => {
   return found;
 };
 
-// Helper function to fetch staked NFTs using only staking events,
-// log all raw staking events (with duplicates) in chronological order,
-// validate each NFT, and then deduplicate the final results by NFT identifier.
+// Helper function to fetch staked NFTs using only staking events.
+// This version collects all raw staking events (including duplicates) in chronological order,
+// then validates each event, and finally deduplicates the validated results by NFT identifier.
 const fetchStakedNfts = async (collectionTicker, contractLabel) => {
   const contractAddresses = {
     oneDexStakedNfts: "erd1qqqqqqqqqqqqqpgqrq6gv0ljf4y9md42pe4m6mh96hcpqnpuusls97tf33",
@@ -893,7 +896,7 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
       .filter(tx => tx.status === "success")
       .sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
 
-    // Capture all raw staking events (including duplicates) in an array.
+    // Collect all raw staking events (with duplicates) in an array.
     const rawStakedEvents = [];
     successfulTxs.forEach(tx => {
       const transfers = (tx.action?.arguments?.transfers || []).filter(
@@ -908,13 +911,15 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
             identifier: item.identifier,
             sender: tx.sender
           });
+        } else {
+          console.log(`Ignoring NFT ${item.identifier} from tx ${tx.hash || tx.nonce} with function "${tx.function}"`);
         }
       });
     });
     console.log("Raw staked NFT events (chronological order):");
     console.table(rawStakedEvents);
 
-    // Use the raw events array for validation (preserving duplicates).
+    // Validate each raw event (duplicates are preserved here).
     const validatedResults = await asyncPool(4, rawStakedEvents, async (event) => {
       const valid = await isNftCurrentlyStaked(event.identifier, contractAddress);
       return valid ? { owner: event.sender, identifier: event.identifier } : null;
