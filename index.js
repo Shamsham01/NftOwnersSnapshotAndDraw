@@ -796,7 +796,7 @@ const fetchAllTransactions = async (baseUrl) => {
       throw new Error(`HTTP error ${response.status}`);
     }
     const data = await response.json();
-    if (data.length === 0) {
+    if (!Array.isArray(data) || data.length === 0) {
       hasMore = false;
     } else {
       allTransactions.push(...data);
@@ -811,7 +811,7 @@ const fetchAllTransactions = async (baseUrl) => {
 };
 
 // Helper function to check if an NFT is currently staked.
-// Logs detailed info when the NFT is not validated.
+// If not, it logs the NFT identifier and the accounts returned.
 const isNftCurrentlyStaked = async (nftIdentifier, expectedSCAddress) => {
   const url = `https://api.elrond.com/nfts/${nftIdentifier}/accounts`;
   const response = await fetch(url);
@@ -822,7 +822,7 @@ const isNftCurrentlyStaked = async (nftIdentifier, expectedSCAddress) => {
   const data = await response.json();
   const found = data.some(account => account.address === expectedSCAddress && Number(account.balance) > 0);
   if (!found) {
-    console.log(`NFT ${nftIdentifier} is not staked as expected. Accounts returned: ${JSON.stringify(data)}`);
+    console.log(`NFT ${nftIdentifier} is NOT staked as expected. Accounts returned: ${JSON.stringify(data)}`);
   } else {
     console.log(`NFT ${nftIdentifier} is validly staked with account ${expectedSCAddress}`);
   }
@@ -830,7 +830,7 @@ const isNftCurrentlyStaked = async (nftIdentifier, expectedSCAddress) => {
 };
 
 // Helper function to fetch staked NFTs using only staking events,
-// then validate each NFT using the Elrond NFT accounts API.
+// then validate each NFT by checking its current ownership via the Elrond API.
 const fetchStakedNfts = async (collectionTicker, contractLabel) => {
   const contractAddresses = {
     oneDexStakedNfts: "erd1qqqqqqqqqqqqqpgqrq6gv0ljf4y9md42pe4m6mh96hcpqnpuusls97tf33",
@@ -855,36 +855,41 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
 
   const stakedNfts = new Map();
   try {
-    // Build the base URL for fetching transactions (pagination is handled)
+    // Build the base URL for fetching transactions.
     const baseUrl = `https://api.multiversx.com/accounts/${contractAddress}/transfers?size=1000&token=${collectionTicker}`;
     const allTransactions = await fetchAllTransactions(baseUrl);
-
-    // Filter only successful transactions and sort them chronologically (oldest first)
+    console.log(`Total transactions fetched: ${allTransactions.length}`);
+    
+    // Filter for successful transactions and sort them chronologically (oldest first).
     const successfulTxs = allTransactions
       .filter(tx => tx.status === "success")
       .sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
-
-    // Process only staking events (ignore unstaking events entirely)
+    console.log(`Total successful transactions: ${successfulTxs.length}`);
+    
+    // Iterate through each transaction.
     successfulTxs.forEach(tx => {
-      // Process transfers relevant to the specified NFT collection
       const transfers = (tx.action?.arguments?.transfers || []).filter(
         transfer => transfer.collection === collectionTicker
       );
-
+      if (transfers.length > 0) {
+        console.log(`Processing tx ${tx.hash} with function "${tx.function}" and NFT(s): ${transfers.map(t => t.identifier).join(', ')}`);
+      }
       transfers.forEach(item => {
+        // Collect NFT only if the tx function equals the expected stake function.
         if (tx.function === stakeFunction) {
           console.log(`✅ Adding staked NFT: ${item.identifier} (Owner: ${tx.sender})`);
           stakedNfts.set(item.identifier, {
             owner: tx.sender,
             identifier: item.identifier
           });
+        } else {
+          console.log(`Ignoring NFT ${item.identifier} from tx ${tx.hash} with function "${tx.function}"`);
         }
       });
     });
-
     console.log(`📊 Collected staked NFT count before validation: ${stakedNfts.size}`);
 
-    // Validate each NFT by calling the Elrond API to check its current account ownership.
+    // Validate each NFT by calling the Elrond API.
     const stakedArray = Array.from(stakedNfts.values());
     const validatedResults = await Promise.all(
       stakedArray.map(async nft => {
@@ -905,22 +910,21 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
 app.post('/stakedNftsSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
   try {
     const { collectionTicker, contractLabel, numberOfWinners } = req.body;
-
-    // Fetch staked NFTs and validate staking status using the new API check.
+    
+    // Fetch staked NFTs and validate each one.
     const stakedData = await fetchStakedNfts(collectionTicker, contractLabel);
     if (stakedData.length === 0) {
       return res.status(404).json({ error: 'No staked NFTs found for this collection' });
     }
-
     const totalStakedCount = stakedData.length;
-
-    // Randomly select winners from the validated staked NFTs.
+    
+    // Randomly select winners.
     const shuffled = stakedData.sort(() => 0.5 - Math.random());
     const winners = shuffled.slice(0, numberOfWinners);
-
-    // Generate CSV string (assuming generateCsv handles stakedData appropriately)
+    
+    // Generate CSV string (assuming generateCsv handles stakedData appropriately).
     const csvString = await generateCsv(stakedData);
-
+    
     res.json({
       winners,
       totalStakedCount,
