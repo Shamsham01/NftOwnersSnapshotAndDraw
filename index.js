@@ -773,7 +773,16 @@ app.post('/esdtSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
 });
 
 
-// Helper function to fetch all paginated transactions
+// Helper function to deduplicate transactions by their unique hash.
+const deduplicateTransactions = (transactions) => {
+  const uniqueTxMap = new Map();
+  transactions.forEach(tx => {
+    uniqueTxMap.set(tx.hash, tx);
+  });
+  return Array.from(uniqueTxMap.values());
+};
+
+// Helper function to fetch all paginated transactions.
 const fetchAllTransactions = async (baseUrl) => {
   let allTransactions = [];
   let from = 0;
@@ -791,7 +800,6 @@ const fetchAllTransactions = async (baseUrl) => {
       hasMore = false;
     } else {
       allTransactions.push(...data);
-      // If fewer items than pageSize are returned, we are on the last page.
       if (data.length < pageSize) {
         hasMore = false;
       } else {
@@ -799,10 +807,23 @@ const fetchAllTransactions = async (baseUrl) => {
       }
     }
   }
-  return allTransactions;
+  return deduplicateTransactions(allTransactions);
 };
 
-// Helper function to fetch staked NFTs
+// Helper function to check if an NFT is still staked (i.e. its owner is the expected smart contract address)
+const isNftCurrentlyStaked = async (nftIdentifier, expectedSCAddress) => {
+  const response = await fetch(`https://api.elrond.com/nfts/${nftIdentifier}/accounts`);
+  if (!response.ok) {
+    console.error(`Failed to fetch NFT ${nftIdentifier} status`);
+    return false;
+  }
+  const data = await response.json();
+  // Return true if one of the accounts matches the expected smart contract address with a balance > 0.
+  return data.some(account => account.address === expectedSCAddress && Number(account.balance) > 0);
+};
+
+// Helper function to fetch staked NFTs using only staking events,
+// then validate each NFT using the Elrond NFT accounts API.
 const fetchStakedNfts = async (collectionTicker, contractLabel) => {
   const contractAddresses = {
     oneDexStakedNfts: "erd1qqqqqqqqqqqqqpgqrq6gv0ljf4y9md42pe4m6mh96hcpqnpuusls97tf33",
@@ -827,24 +848,23 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
 
   const stakedNfts = new Map();
   try {
-    // Build the base URL (pagination will be handled in fetchAllTransactions)
+    // Build the base URL for fetching transactions (pagination is handled below)
     const baseUrl = `https://api.multiversx.com/accounts/${contractAddress}/transfers?size=1000&token=${collectionTicker}`;
     const allTransactions = await fetchAllTransactions(baseUrl);
 
-    // Filter only successful transactions and sort them chronologically (oldest first)
+    // Filter only successful transactions and sort them in chronological order (oldest first)
     const successfulTxs = allTransactions
       .filter(tx => tx.status === "success")
       .sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
 
-    // Process each transaction and update stakedNfts map
+    // Process staking events only (ignoring unstaking events entirely)
     successfulTxs.forEach(tx => {
-      // Process only transfers relevant to the collectionTicker
+      // Process only transfers relevant to the specified NFT collection
       const transfers = (tx.action?.arguments?.transfers || []).filter(
         transfer => transfer.collection === collectionTicker
       );
 
       transfers.forEach(item => {
-        // For staking events, add (or update) the NFT entry
         if (tx.function === stakeFunction) {
           console.log(`✅ Adding staked NFT: ${item.identifier} (Owner: ${tx.sender})`);
           stakedNfts.set(item.identifier, {
@@ -852,16 +872,22 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
             identifier: item.identifier
           });
         }
-        // For unstaking events (from the SC to a user), remove the NFT entry
-        else if (tx.function === 'ESDTNFTTransfer' && tx.sender === contractAddress) {
-          console.log(`❌ Removing unstaked NFT: ${item.identifier}`);
-          stakedNfts.delete(item.identifier);
-        }
       });
     });
 
-    console.log(`📊 Final staked NFT count: ${stakedNfts.size}`);
-    return Array.from(stakedNfts.values());
+    console.log(`📊 Collected staked NFT count before validation: ${stakedNfts.size}`);
+
+    // Validate each NFT by calling the Elrond API to check its current account ownership.
+    const stakedArray = Array.from(stakedNfts.values());
+    const validatedResults = await Promise.all(
+      stakedArray.map(async nft => {
+        const valid = await isNftCurrentlyStaked(nft.identifier, contractAddress);
+        return valid ? nft : null;
+      })
+    );
+    const finalStakedNfts = validatedResults.filter(nft => nft !== null);
+    console.log(`📊 Final validated staked NFT count: ${finalStakedNfts.length}`);
+    return finalStakedNfts;
   } catch (error) {
     console.error("Error fetching staked NFTs data:", error.message);
     throw error;
@@ -873,16 +899,15 @@ app.post('/stakedNftsSnapshotDraw', checkToken, handleUsageFee, async (req, res)
   try {
     const { collectionTicker, contractLabel, numberOfWinners } = req.body;
 
-    // Fetch staked NFTs and their owners with filters
+    // Fetch staked NFTs and validate staking status using the new API check.
     const stakedData = await fetchStakedNfts(collectionTicker, contractLabel);
     if (stakedData.length === 0) {
       return res.status(404).json({ error: 'No staked NFTs found for this collection' });
     }
 
-    // Count total staked NFTs
     const totalStakedCount = stakedData.length;
 
-    // Random selection of winners
+    // Randomly select winners from the validated staked NFTs.
     const shuffled = stakedData.sort(() => 0.5 - Math.random());
     const winners = shuffled.slice(0, numberOfWinners);
 
@@ -896,7 +921,6 @@ app.post('/stakedNftsSnapshotDraw', checkToken, handleUsageFee, async (req, res)
       message: `${numberOfWinners} winners have been selected from staked NFTs in collection ${collectionTicker}.`,
       usageFeeHash: req.usageFeeHash,
     });
-
   } catch (error) {
     console.error('Error during stakedNftsSnapshotDraw:', error);
     res.status(500).json({ error: error.message });
