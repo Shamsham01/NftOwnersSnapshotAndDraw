@@ -774,7 +774,7 @@ app.post('/esdtSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
 
 
 // Helper: fetchWithRetry wraps fetch with retries on failure (e.g. rate limit errors).
-async function fetchWithRetry(url, options = {}, retries = 5, backoff = 1000) {
+async function fetchWithRetry(url, options = {}, retries = 15, backoff = 2000) {
   for (let i = 0; i < retries; i++) {
     try {
       const response = await fetch(url, options);
