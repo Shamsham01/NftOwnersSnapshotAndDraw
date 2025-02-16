@@ -817,17 +817,10 @@ async function asyncPool(poolLimit, array, iteratorFn) {
   return Promise.all(ret);
 }
 
-// Helper function to deduplicate transactions by their unique hash.
-const deduplicateTransactions = (transactions) => {
-  const uniqueTxMap = new Map();
-  transactions.forEach(tx => {
-    const key = tx.hash || tx.nonce;
-    uniqueTxMap.set(key, tx);
-  });
-  return Array.from(uniqueTxMap.values());
-};
+// (Removed deduplicateTransactions helper as deduplication will only occur at the end.)
 
 // Updated helper function to fetch all paginated transactions using cursor-based pagination.
+// Note: We now return all raw transactions without deduplication.
 const fetchAllTransactions = async (baseUrl) => {
   let allTransactions = [];
   let nextCursor = null;
@@ -844,7 +837,7 @@ const fetchAllTransactions = async (baseUrl) => {
     nextCursor = result.cursor;
   } while (nextCursor);
   console.log(`Total transactions fetched: ${allTransactions.length}`);
-  return deduplicateTransactions(allTransactions);
+  return allTransactions;
 };
 
 // Helper function to check if an NFT is currently staked.
@@ -865,7 +858,7 @@ const isNftCurrentlyStaked = async (nftIdentifier, expectedSCAddress) => {
 };
 
 // Helper function to fetch staked NFTs using only staking events.
-// This version collects all raw staking events (including duplicates) in chronological order,
+// This version collects all raw staking events (with duplicates) in chronological order,
 // then validates each event, and finally deduplicates the validated results by NFT identifier.
 const fetchStakedNfts = async (collectionTicker, contractLabel) => {
   const contractAddresses = {
@@ -917,7 +910,7 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
       });
     });
     
-    // Build CSV string from rawStakedEvents.
+    // Build CSV string for raw events.
     const header = "txHash,timestamp,function,identifier,sender";
     const csvRows = rawStakedEvents.map(e =>
       `${e.txHash},${e.timestamp},${e.function},${e.identifier},${e.sender}`
@@ -943,7 +936,7 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
   }
 };
 
-// Route for staked NFTs snapshot draw remains the same.
+// Route for staked NFTs snapshot draw
 app.post('/stakedNftsSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
   try {
     const { collectionTicker, contractLabel, numberOfWinners } = req.body;
