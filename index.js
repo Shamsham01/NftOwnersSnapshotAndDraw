@@ -774,24 +774,27 @@ app.post('/esdtSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
 
 
 // Helper: fetchWithRetry wraps fetch with retries on failure (e.g. rate limit errors).
-async function fetchWithRetry(url, options = {}, retries = 15, backoff = 1000) {
+async function fetchWithRetry(url, options = {}, retries = 15, backoff = 2000) {
   for (let i = 0; i < retries; i++) {
     try {
       const response = await fetch(url, options);
       if (response.status === 429) {
         const retryAfter = response.headers.get('Retry-After');
         const delay = retryAfter ? Number(retryAfter) * 1000 : backoff;
+        console.log(`Rate limit hit for ${url}. Retrying in ${delay}ms... (attempt ${i + 1})`);
         await new Promise(res => setTimeout(res, delay));
         backoff *= 2;
         continue;
       }
       if (!response.ok) {
+        console.error(`Non-OK response (${response.status}) for ${url}. Retrying in ${backoff}ms... (attempt ${i + 1})`);
         await new Promise(res => setTimeout(res, backoff));
         backoff *= 2;
         continue;
       }
       return response;
     } catch (error) {
+      console.error(`Error fetching ${url}: ${error.message}. Retrying in ${backoff}ms... (attempt ${i + 1})`);
       await new Promise(res => setTimeout(res, backoff));
       backoff *= 2;
     }
@@ -908,8 +911,16 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
       });
     });
     
+    // Build CSV string for raw events (for debugging) in a copy-paste friendly format.
+    const header = "txHash,timestamp,function,identifier,sender";
+    const csvRows = rawStakedEvents.map(e =>
+      `${e.txHash},${e.timestamp},${e.function},${e.identifier},${e.sender}`
+    );
+    const csvString = [header, ...csvRows].join("\n");
+    console.log("Raw staked NFT events (CSV format):\n" + csvString);
+
     // Validate each raw event (preserving duplicates).
-    const validatedResults = await asyncPool(8, rawStakedEvents, async (event) => {
+    const validatedResults = await asyncPool(3, rawStakedEvents, async (event) => {
       const valid = await isNftCurrentlyStaked(event.identifier, contractAddress);
       return valid ? { owner: event.sender, identifier: event.identifier } : null;
     });
@@ -942,19 +953,20 @@ app.post('/stakedNftsSnapshotDraw', checkToken, handleUsageFee, async (req, res)
       acc[owner] = (acc[owner] || 0) + 1;
       return acc;
     }, {});
-    const uniqueOwnersStats = Object.keys(ownerCounts).map(owner => ({
-      owner,
-      tokensCount: ownerCounts[owner]
-    }))
-    .sort((a, b) => b.tokensCount - a.tokensCount);
-    
+    const uniqueOwnersStats = Object.keys(ownerCounts)
+      .map(owner => ({
+        owner,
+        tokensCount: ownerCounts[owner]
+      }))
+      .sort((a, b) => b.tokensCount - a.tokensCount); // Sorted descending by tokensCount
+
     const shuffled = stakedData.sort(() => 0.5 - Math.random());
     const winners = shuffled.slice(0, numberOfWinners);
-    const csvString = await generateCsv(stakedData);
+    const csvStringForFinal = await generateCsv(stakedData);
     res.json({
       winners,
       totalStakedCount,
-      csvString,
+      csvString: csvStringForFinal,
       uniqueOwnersStats,
       message: `${numberOfWinners} winners have been selected from staked NFTs in collection ${collectionTicker}.`,
       usageFeeHash: req.usageFeeHash,
