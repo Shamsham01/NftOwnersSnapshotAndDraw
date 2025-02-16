@@ -920,7 +920,7 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
     console.log("Raw staked NFT events (CSV format):\n" + csvString);
 
     // Validate each raw event (preserving duplicates).
-    const validatedResults = await asyncPool(3, rawStakedEvents, async (event) => {
+    const validatedResults = await asyncPool(2, rawStakedEvents, async (event) => {
       const valid = await isNftCurrentlyStaked(event.identifier, contractAddress);
       return valid ? { owner: event.sender, identifier: event.identifier } : null;
     });
