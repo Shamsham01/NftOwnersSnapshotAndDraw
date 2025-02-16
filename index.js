@@ -774,17 +774,16 @@ app.post('/esdtSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
 
 
 // Helper: fetchWithRetry wraps fetch with retries on failure (e.g. rate limit errors).
-async function fetchWithRetry(url, options = {}, retries = 10, backoff = 2000) {
+async function fetchWithRetry(url, options = {}, retries = 5, backoff = 1000) {
   for (let i = 0; i < retries; i++) {
     try {
       const response = await fetch(url, options);
       if (response.status === 429) {
-        // If a Retry-After header is provided, use it; otherwise, use our backoff.
         const retryAfter = response.headers.get('Retry-After');
         const delay = retryAfter ? Number(retryAfter) * 1000 : backoff;
         console.log(`Rate limit hit for ${url}. Retrying in ${delay}ms... (attempt ${i + 1})`);
         await new Promise(res => setTimeout(res, delay));
-        backoff *= 2; // Exponential backoff
+        backoff *= 2;
         continue;
       }
       if (!response.ok) {
@@ -845,14 +844,13 @@ const fetchAllTransactions = async (baseUrl) => {
     const transactions = result.data || result;
     console.log(`Fetched ${transactions.length} transactions from ${url}`);
     allTransactions.push(...transactions);
-    nextCursor = result.cursor; // Will be undefined/null if no further pages.
+    nextCursor = result.cursor;
   } while (nextCursor);
   console.log(`Total transactions fetched: ${allTransactions.length}`);
   return deduplicateTransactions(allTransactions);
 };
 
 // Helper function to check if an NFT is currently staked.
-// Note: If fetching fails after retries, this function will throw an error.
 const isNftCurrentlyStaked = async (nftIdentifier, expectedSCAddress) => {
   const url = `https://api.elrond.com/nfts/${nftIdentifier}/accounts`;
   const response = await fetchWithRetry(url);
@@ -867,7 +865,7 @@ const isNftCurrentlyStaked = async (nftIdentifier, expectedSCAddress) => {
 };
 
 // Helper function to fetch staked NFTs using only staking events,
-// then validate each NFT by checking its current ownership via the Elrond API.
+// validate each NFT, and then deduplicate final results by NFT identifier.
 const fetchStakedNfts = async (collectionTicker, contractLabel) => {
   const contractAddresses = {
     oneDexStakedNfts: "erd1qqqqqqqqqqqqqpgqrq6gv0ljf4y9md42pe4m6mh96hcpqnpuusls97tf33",
@@ -921,18 +919,21 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
     });
     console.log(`📊 Collected staked NFT count before validation: ${stakedNfts.size}`);
 
-    // Validate each NFT with controlled concurrency.
     const stakedArray = Array.from(stakedNfts.values());
     const validatedResults = await asyncPool(4, stakedArray, async (nft) => {
       const valid = await isNftCurrentlyStaked(nft.identifier, contractAddress);
       return valid ? nft : null;
     });
     const finalStakedNfts = validatedResults.filter(nft => nft !== null);
-    console.log(`📊 Final validated staked NFT count: ${finalStakedNfts.length}`);
-    return finalStakedNfts;
+    console.log(`📊 Validated staked NFT count (may contain duplicates): ${finalStakedNfts.length}`);
+
+    // Deduplicate the final results by NFT identifier.
+    const dedupedNfts = Array.from(new Map(finalStakedNfts.map(nft => [nft.identifier, nft])).values());
+    console.log(`📊 Deduplicated staked NFT count: ${dedupedNfts.length}`);
+    return dedupedNfts;
   } catch (error) {
     console.error("Error fetching staked NFTs data:", error.message);
-    throw error; // Propagate the error so that the route can return an error response.
+    throw error;
   }
 };
 
@@ -957,7 +958,6 @@ app.post('/stakedNftsSnapshotDraw', checkToken, handleUsageFee, async (req, res)
     });
   } catch (error) {
     console.error('Error during stakedNftsSnapshotDraw:', error);
-    // Return a 500 error with details so that failures in fetching are not silently ignored.
     res.status(500).json({ error: `Failed to fetch staked NFTs: ${error.message}` });
   }
 });
