@@ -774,7 +774,7 @@ app.post('/esdtSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
 
 
 // Helper: fetchWithRetry wraps fetch with retries on failure (e.g. rate limit errors).
-async function fetchWithRetry(url, options = {}, retries = 5, backoff = 1000) {
+async function fetchWithRetry(url, options = {}, retries = 10, backoff = 2000) {
   for (let i = 0; i < retries; i++) {
     try {
       const response = await fetch(url, options);
@@ -825,7 +825,6 @@ async function asyncPool(poolLimit, array, iteratorFn) {
 const deduplicateTransactions = (transactions) => {
   const uniqueTxMap = new Map();
   transactions.forEach(tx => {
-    // Use tx.hash if available; otherwise, use tx.nonce as a fallback.
     const key = tx.hash || tx.nonce;
     uniqueTxMap.set(key, tx);
   });
@@ -853,28 +852,18 @@ const fetchAllTransactions = async (baseUrl) => {
 };
 
 // Helper function to check if an NFT is currently staked.
-// This function now uses fetchWithRetry and will retry rate-limited calls.
-// It logs detailed info if the NFT is not validated.
+// Note: If fetching fails after retries, this function will throw an error.
 const isNftCurrentlyStaked = async (nftIdentifier, expectedSCAddress) => {
   const url = `https://api.elrond.com/nfts/${nftIdentifier}/accounts`;
-  try {
-    const response = await fetchWithRetry(url);
-    const data = await response.json();
-    const found = data.some(account => account.address === expectedSCAddress && Number(account.balance) > 0);
-    if (!found) {
-      console.log(`NFT ${nftIdentifier} is NOT staked as expected. Accounts returned: ${JSON.stringify(data)}`);
-    } else {
-      console.log(`NFT ${nftIdentifier} is validly staked with account ${expectedSCAddress}`);
-    }
-    return found;
-  } catch (error) {
-    console.error(`Failed to validate NFT ${nftIdentifier}: ${error.message}`);
-    // If even after retries we fail, you may decide to:
-    // - return false (exclude it), or
-    // - return true (include it to avoid undercounting)
-    // Here, we choose to return false.
-    return false;
+  const response = await fetchWithRetry(url);
+  const data = await response.json();
+  const found = data.some(account => account.address === expectedSCAddress && Number(account.balance) > 0);
+  if (!found) {
+    console.log(`NFT ${nftIdentifier} is NOT staked as expected. Accounts returned: ${JSON.stringify(data)}`);
+  } else {
+    console.log(`NFT ${nftIdentifier} is validly staked with account ${expectedSCAddress}`);
   }
+  return found;
 };
 
 // Helper function to fetch staked NFTs using only staking events,
@@ -903,17 +892,14 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
 
   const stakedNfts = new Map();
   try {
-    // Build the base URL for fetching transactions.
     const baseUrl = `https://api.multiversx.com/accounts/${contractAddress}/transfers?size=1000&token=${collectionTicker}`;
     const allTransactions = await fetchAllTransactions(baseUrl);
     console.log(`Total successful transactions: ${allTransactions.filter(tx => tx.status === "success").length}`);
     
-    // Filter for successful transactions and sort them chronologically (oldest first).
     const successfulTxs = allTransactions
       .filter(tx => tx.status === "success")
       .sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
     
-    // Iterate through each transaction and capture NFT identifiers from staking events.
     successfulTxs.forEach(tx => {
       const transfers = (tx.action?.arguments?.transfers || []).filter(
         transfer => transfer.collection === collectionTicker
@@ -935,7 +921,7 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
     });
     console.log(`📊 Collected staked NFT count before validation: ${stakedNfts.size}`);
 
-    // Validate each NFT by calling the Elrond API using our concurrency-limited asyncPool.
+    // Validate each NFT with controlled concurrency.
     const stakedArray = Array.from(stakedNfts.values());
     const validatedResults = await asyncPool(4, stakedArray, async (nft) => {
       const valid = await isNftCurrentlyStaked(nft.identifier, contractAddress);
@@ -946,7 +932,7 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
     return finalStakedNfts;
   } catch (error) {
     console.error("Error fetching staked NFTs data:", error.message);
-    throw error;
+    throw error; // Propagate the error so that the route can return an error response.
   }
 };
 
@@ -954,21 +940,14 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
 app.post('/stakedNftsSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
   try {
     const { collectionTicker, contractLabel, numberOfWinners } = req.body;
-    
-    // Fetch staked NFTs and validate each one.
     const stakedData = await fetchStakedNfts(collectionTicker, contractLabel);
     if (stakedData.length === 0) {
       return res.status(404).json({ error: 'No staked NFTs found for this collection' });
     }
     const totalStakedCount = stakedData.length;
-    
-    // Randomly select winners.
     const shuffled = stakedData.sort(() => 0.5 - Math.random());
     const winners = shuffled.slice(0, numberOfWinners);
-    
-    // Generate CSV string (assuming generateCsv handles stakedData appropriately).
     const csvString = await generateCsv(stakedData);
-    
     res.json({
       winners,
       totalStakedCount,
@@ -978,7 +957,8 @@ app.post('/stakedNftsSnapshotDraw', checkToken, handleUsageFee, async (req, res)
     });
   } catch (error) {
     console.error('Error during stakedNftsSnapshotDraw:', error);
-    res.status(500).json({ error: error.message });
+    // Return a 500 error with details so that failures in fetching are not silently ignored.
+    res.status(500).json({ error: `Failed to fetch staked NFTs: ${error.message}` });
   }
 });
 
