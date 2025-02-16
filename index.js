@@ -779,22 +779,20 @@ async function fetchWithRetry(url, options = {}, retries = 15, backoff = 2000) {
     try {
       const response = await fetch(url, options);
       if (response.status === 429) {
+        // Retry silently (without logging retry details)
         const retryAfter = response.headers.get('Retry-After');
         const delay = retryAfter ? Number(retryAfter) * 1000 : backoff;
-        console.log(`Rate limit hit for ${url}. Retrying in ${delay}ms... (attempt ${i + 1})`);
         await new Promise(res => setTimeout(res, delay));
         backoff *= 2;
         continue;
       }
       if (!response.ok) {
-        console.error(`Non-OK response (${response.status}) for ${url}. Retrying in ${backoff}ms... (attempt ${i + 1})`);
         await new Promise(res => setTimeout(res, backoff));
         backoff *= 2;
         continue;
       }
       return response;
     } catch (error) {
-      console.error(`Error fetching ${url}: ${error.message}. Retrying in ${backoff}ms... (attempt ${i + 1})`);
       await new Promise(res => setTimeout(res, backoff));
       backoff *= 2;
     }
@@ -855,7 +853,7 @@ const isNftCurrentlyStaked = async (nftIdentifier, expectedSCAddress) => {
   const url = `https://api.elrond.com/nfts/${nftIdentifier}/accounts`;
   const response = await fetchWithRetry(url);
   const data = await response.json();
-  const found = data.some(account => account.address === expectedSCAddress && Number(account.balance) > 0);
+  const found = data.some(account => account.address.toLowerCase().trim() === expectedSCAddress.toLowerCase().trim() && Number(account.balance) > 0);
   if (!found) {
     console.log(`NFT ${nftIdentifier} is NOT staked as expected. Accounts returned: ${JSON.stringify(data)}`);
   } else {
@@ -865,6 +863,7 @@ const isNftCurrentlyStaked = async (nftIdentifier, expectedSCAddress) => {
 };
 
 // Helper function to fetch staked NFTs using only staking events,
+// log all raw NFT staking details in chronological order (successful transactions only),
 // validate each NFT, and then deduplicate final results by NFT identifier.
 const fetchStakedNfts = async (collectionTicker, contractLabel) => {
   const contractAddresses = {
@@ -892,30 +891,34 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
   try {
     const baseUrl = `https://api.multiversx.com/accounts/${contractAddress}/transfers?size=1000&token=${collectionTicker}`;
     const allTransactions = await fetchAllTransactions(baseUrl);
-    console.log(`Total successful transactions: ${allTransactions.filter(tx => tx.status === "success").length}`);
-    
     const successfulTxs = allTransactions
       .filter(tx => tx.status === "success")
       .sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
-    
+
+    // Log raw staked NFT details (before any filtering/deduplication)
+    const rawStakedEvents = [];
     successfulTxs.forEach(tx => {
       const transfers = (tx.action?.arguments?.transfers || []).filter(
         transfer => transfer.collection === collectionTicker
       );
-      if (transfers.length > 0) {
-        console.log(`Processing tx ${tx.hash || tx.nonce} with function "${tx.function}" and NFT(s): ${transfers.map(t => t.identifier).join(', ')}`);
-      }
       transfers.forEach(item => {
         if (tx.function === stakeFunction) {
-          console.log(`✅ Adding staked NFT: ${item.identifier} (Owner: ${tx.sender})`);
-          stakedNfts.set(item.identifier, {
-            owner: tx.sender,
-            identifier: item.identifier
+          rawStakedEvents.push({
+            txHash: tx.hash || tx.nonce,
+            timestamp: tx.timestamp,
+            function: tx.function,
+            identifier: item.identifier,
+            sender: tx.sender
           });
-        } else {
-          console.log(`Ignoring NFT ${item.identifier} from tx ${tx.hash || tx.nonce} with function "${tx.function}"`);
         }
       });
+    });
+    console.log("Raw staked NFT events (chronological order):");
+    console.table(rawStakedEvents);
+
+    // Populate stakedNfts Map (this will naturally deduplicate by identifier)
+    rawStakedEvents.forEach(event => {
+      stakedNfts.set(event.identifier, { owner: event.sender, identifier: event.identifier });
     });
     console.log(`📊 Collected staked NFT count before validation: ${stakedNfts.size}`);
 
@@ -927,7 +930,7 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
     const finalStakedNfts = validatedResults.filter(nft => nft !== null);
     console.log(`📊 Validated staked NFT count (may contain duplicates): ${finalStakedNfts.length}`);
 
-    // Deduplicate the final results by NFT identifier.
+    // Deduplicate final results by NFT identifier.
     const dedupedNfts = Array.from(new Map(finalStakedNfts.map(nft => [nft.identifier, nft])).values());
     console.log(`📊 Deduplicated staked NFT count: ${dedupedNfts.length}`);
     return dedupedNfts;
@@ -961,6 +964,7 @@ app.post('/stakedNftsSnapshotDraw', checkToken, handleUsageFee, async (req, res)
     res.status(500).json({ error: `Failed to fetch staked NFTs: ${error.message}` });
   }
 });
+
 
 
 // Start the server
