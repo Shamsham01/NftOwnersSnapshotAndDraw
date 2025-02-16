@@ -817,10 +817,8 @@ async function asyncPool(poolLimit, array, iteratorFn) {
   return Promise.all(ret);
 }
 
-// (Removed deduplicateTransactions helper as deduplication will only occur at the end.)
-
 // Updated helper function to fetch all paginated transactions using cursor-based pagination.
-// Note: We now return all raw transactions without deduplication.
+// Note: We return all raw transactions (no deduplication at this stage).
 const fetchAllTransactions = async (baseUrl) => {
   let allTransactions = [];
   let nextCursor = null;
@@ -910,7 +908,7 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
       });
     });
     
-    // Build CSV string for raw events.
+    // Build CSV string for raw events (for debugging).
     const header = "txHash,timestamp,function,identifier,sender";
     const csvRows = rawStakedEvents.map(e =>
       `${e.txHash},${e.timestamp},${e.function},${e.identifier},${e.sender}`
@@ -945,6 +943,18 @@ app.post('/stakedNftsSnapshotDraw', checkToken, handleUsageFee, async (req, res)
       return res.status(404).json({ error: 'No staked NFTs found for this collection' });
     }
     const totalStakedCount = stakedData.length;
+    
+    // Calculate unique owners statistics.
+    const ownerCounts = stakedData.reduce((acc, nft) => {
+      const owner = nft.owner;
+      acc[owner] = (acc[owner] || 0) + 1;
+      return acc;
+    }, {});
+    const uniqueOwnersStats = Object.keys(ownerCounts).map(owner => ({
+      owner,
+      tokensCount: ownerCounts[owner]
+    }));
+    
     const shuffled = stakedData.sort(() => 0.5 - Math.random());
     const winners = shuffled.slice(0, numberOfWinners);
     const csvString = await generateCsv(stakedData);
@@ -952,6 +962,7 @@ app.post('/stakedNftsSnapshotDraw', checkToken, handleUsageFee, async (req, res)
       winners,
       totalStakedCount,
       csvString,
+      uniqueOwnersStats,
       message: `${numberOfWinners} winners have been selected from staked NFTs in collection ${collectionTicker}.`,
       usageFeeHash: req.usageFeeHash,
     });
