@@ -773,6 +773,36 @@ app.post('/esdtSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
 });
 
 
+// Helper: fetchWithRetry wraps fetch with retries on failure (e.g. rate limit errors).
+async function fetchWithRetry(url, options = {}, retries = 5, backoff = 1000) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const response = await fetch(url, options);
+      if (response.status === 429) {
+        // If a Retry-After header is provided, use it; otherwise, use our backoff.
+        const retryAfter = response.headers.get('Retry-After');
+        const delay = retryAfter ? Number(retryAfter) * 1000 : backoff;
+        console.log(`Rate limit hit for ${url}. Retrying in ${delay}ms... (attempt ${i + 1})`);
+        await new Promise(res => setTimeout(res, delay));
+        backoff *= 2; // Exponential backoff
+        continue;
+      }
+      if (!response.ok) {
+        console.error(`Non-OK response (${response.status}) for ${url}. Retrying in ${backoff}ms... (attempt ${i + 1})`);
+        await new Promise(res => setTimeout(res, backoff));
+        backoff *= 2;
+        continue;
+      }
+      return response;
+    } catch (error) {
+      console.error(`Error fetching ${url}: ${error.message}. Retrying in ${backoff}ms... (attempt ${i + 1})`);
+      await new Promise(res => setTimeout(res, backoff));
+      backoff *= 2;
+    }
+  }
+  throw new Error(`Failed to fetch ${url} after ${retries} retries`);
+}
+
 // Helper: Async Pool - limits concurrency of async tasks.
 async function asyncPool(poolLimit, array, iteratorFn) {
   const ret = [];
@@ -795,7 +825,7 @@ async function asyncPool(poolLimit, array, iteratorFn) {
 const deduplicateTransactions = (transactions) => {
   const uniqueTxMap = new Map();
   transactions.forEach(tx => {
-    // Use tx.hash if available; otherwise, use a fallback (like tx.nonce)
+    // Use tx.hash if available; otherwise, use tx.nonce as a fallback.
     const key = tx.hash || tx.nonce;
     uniqueTxMap.set(key, tx);
   });
@@ -811,10 +841,7 @@ const fetchAllTransactions = async (baseUrl) => {
     if (nextCursor) {
       url += `&cursor=${encodeURIComponent(nextCursor)}`;
     }
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`HTTP error ${response.status}`);
-    }
+    const response = await fetchWithRetry(url);
     const result = await response.json();
     const transactions = result.data || result;
     console.log(`Fetched ${transactions.length} transactions from ${url}`);
@@ -826,22 +853,28 @@ const fetchAllTransactions = async (baseUrl) => {
 };
 
 // Helper function to check if an NFT is currently staked.
-// It calls the Elrond API and logs detailed info if the NFT is not valid.
+// This function now uses fetchWithRetry and will retry rate-limited calls.
+// It logs detailed info if the NFT is not validated.
 const isNftCurrentlyStaked = async (nftIdentifier, expectedSCAddress) => {
   const url = `https://api.elrond.com/nfts/${nftIdentifier}/accounts`;
-  const response = await fetch(url);
-  if (!response.ok) {
-    console.error(`Failed to fetch NFT ${nftIdentifier} status from ${url}`);
+  try {
+    const response = await fetchWithRetry(url);
+    const data = await response.json();
+    const found = data.some(account => account.address === expectedSCAddress && Number(account.balance) > 0);
+    if (!found) {
+      console.log(`NFT ${nftIdentifier} is NOT staked as expected. Accounts returned: ${JSON.stringify(data)}`);
+    } else {
+      console.log(`NFT ${nftIdentifier} is validly staked with account ${expectedSCAddress}`);
+    }
+    return found;
+  } catch (error) {
+    console.error(`Failed to validate NFT ${nftIdentifier}: ${error.message}`);
+    // If even after retries we fail, you may decide to:
+    // - return false (exclude it), or
+    // - return true (include it to avoid undercounting)
+    // Here, we choose to return false.
     return false;
   }
-  const data = await response.json();
-  const found = data.some(account => account.address === expectedSCAddress && Number(account.balance) > 0);
-  if (!found) {
-    console.log(`NFT ${nftIdentifier} is NOT staked as expected. Accounts returned: ${JSON.stringify(data)}`);
-  } else {
-    console.log(`NFT ${nftIdentifier} is validly staked with account ${expectedSCAddress}`);
-  }
-  return found;
 };
 
 // Helper function to fetch staked NFTs using only staking events,
