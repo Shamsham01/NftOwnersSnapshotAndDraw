@@ -953,7 +953,8 @@ app.post('/stakedNftsSnapshotDraw', checkToken, handleUsageFee, async (req, res)
     const uniqueOwnersStats = Object.keys(ownerCounts).map(owner => ({
       owner,
       tokensCount: ownerCounts[owner]
-    }));
+    }))
+    .sort((a, b) => b.tokensCount - a.tokensCount);
     
     const shuffled = stakedData.sort(() => 0.5 - Math.random());
     const winners = shuffled.slice(0, numberOfWinners);
