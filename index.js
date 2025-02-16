@@ -774,7 +774,7 @@ app.post('/esdtSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
 
 
 // Helper: fetchWithRetry wraps fetch with retries on failure (e.g. rate limit errors).
-async function fetchWithRetry(url, options = {}, retries = 15, backoff = 2000) {
+async function fetchWithRetry(url, options = {}, retries = 20, backoff = 1000) {
   for (let i = 0; i < retries; i++) {
     try {
       const response = await fetch(url, options);
@@ -789,7 +789,7 @@ async function fetchWithRetry(url, options = {}, retries = 15, backoff = 2000) {
       if (!response.ok) {
         console.error(`Non-OK response (${response.status}) for ${url}. Retrying in ${backoff}ms... (attempt ${i + 1})`);
         await new Promise(res => setTimeout(res, backoff));
-        backoff *= 2;
+        //backoff *= 2;
         continue;
       }
       return response;
@@ -920,7 +920,7 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
     console.log("Raw staked NFT events (CSV format):\n" + csvString);
 
     // Validate each raw event (preserving duplicates).
-    const validatedResults = await asyncPool(2, rawStakedEvents, async (event) => {
+    const validatedResults = await asyncPool(16, rawStakedEvents, async (event) => {
       const valid = await isNftCurrentlyStaked(event.identifier, contractAddress);
       return valid ? { owner: event.sender, identifier: event.identifier } : null;
     });
