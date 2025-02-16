@@ -783,7 +783,7 @@ async function fetchWithRetry(url, options = {}, retries = 20, backoff = 1000) {
         const delay = retryAfter ? Number(retryAfter) * 1000 : backoff;
         console.log(`Rate limit hit for ${url}. Retrying in ${delay}ms... (attempt ${i + 1})`);
         await new Promise(res => setTimeout(res, delay));
-        backoff *= 2;
+        //backoff *= 2;
         continue;
       }
       if (!response.ok) {
@@ -796,7 +796,7 @@ async function fetchWithRetry(url, options = {}, retries = 20, backoff = 1000) {
     } catch (error) {
       console.error(`Error fetching ${url}: ${error.message}. Retrying in ${backoff}ms... (attempt ${i + 1})`);
       await new Promise(res => setTimeout(res, backoff));
-      backoff *= 2;
+      //backoff *= 2;
     }
   }
   throw new Error(`Failed to fetch ${url} after ${retries} retries`);
@@ -920,7 +920,7 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
     console.log("Raw staked NFT events (CSV format):\n" + csvString);
 
     // Validate each raw event (preserving duplicates).
-    const validatedResults = await asyncPool(16, rawStakedEvents, async (event) => {
+    const validatedResults = await asyncPool(3, rawStakedEvents, async (event) => {
       const valid = await isNftCurrentlyStaked(event.identifier, contractAddress);
       return valid ? { owner: event.sender, identifier: event.identifier } : null;
     });
