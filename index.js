@@ -779,7 +779,6 @@ async function fetchWithRetry(url, options = {}, retries = 15, backoff = 2000) {
     try {
       const response = await fetch(url, options);
       if (response.status === 429) {
-        // Retry silently (without logging retry details)
         const retryAfter = response.headers.get('Retry-After');
         const delay = retryAfter ? Number(retryAfter) * 1000 : backoff;
         await new Promise(res => setTimeout(res, delay));
@@ -863,8 +862,8 @@ const isNftCurrentlyStaked = async (nftIdentifier, expectedSCAddress) => {
 };
 
 // Helper function to fetch staked NFTs using only staking events,
-// log all raw NFT staking details in chronological order (successful transactions only),
-// validate each NFT, and then deduplicate final results by NFT identifier.
+// log all raw staking events (with duplicates) in chronological order,
+// validate each NFT, and then deduplicate the final results by NFT identifier.
 const fetchStakedNfts = async (collectionTicker, contractLabel) => {
   const contractAddresses = {
     oneDexStakedNfts: "erd1qqqqqqqqqqqqqpgqrq6gv0ljf4y9md42pe4m6mh96hcpqnpuusls97tf33",
@@ -887,7 +886,6 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
     throw new Error("Unsupported contract label or staking function");
   }
 
-  const stakedNfts = new Map();
   try {
     const baseUrl = `https://api.multiversx.com/accounts/${contractAddress}/transfers?size=1000&token=${collectionTicker}`;
     const allTransactions = await fetchAllTransactions(baseUrl);
@@ -895,7 +893,7 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
       .filter(tx => tx.status === "success")
       .sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
 
-    // Log raw staked NFT details (before any filtering/deduplication)
+    // Capture all raw staking events (including duplicates) in an array.
     const rawStakedEvents = [];
     successfulTxs.forEach(tx => {
       const transfers = (tx.action?.arguments?.transfers || []).filter(
@@ -916,22 +914,16 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
     console.log("Raw staked NFT events (chronological order):");
     console.table(rawStakedEvents);
 
-    // Populate stakedNfts Map (this will naturally deduplicate by identifier)
-    rawStakedEvents.forEach(event => {
-      stakedNfts.set(event.identifier, { owner: event.sender, identifier: event.identifier });
+    // Use the raw events array for validation (preserving duplicates).
+    const validatedResults = await asyncPool(4, rawStakedEvents, async (event) => {
+      const valid = await isNftCurrentlyStaked(event.identifier, contractAddress);
+      return valid ? { owner: event.sender, identifier: event.identifier } : null;
     });
-    console.log(`📊 Collected staked NFT count before validation: ${stakedNfts.size}`);
-
-    const stakedArray = Array.from(stakedNfts.values());
-    const validatedResults = await asyncPool(4, stakedArray, async (nft) => {
-      const valid = await isNftCurrentlyStaked(nft.identifier, contractAddress);
-      return valid ? nft : null;
-    });
-    const finalStakedNfts = validatedResults.filter(nft => nft !== null);
-    console.log(`📊 Validated staked NFT count (may contain duplicates): ${finalStakedNfts.length}`);
+    const finalStakedNftsWithDuplicates = validatedResults.filter(nft => nft !== null);
+    console.log(`📊 Validated staked NFT count (may contain duplicates): ${finalStakedNftsWithDuplicates.length}`);
 
     // Deduplicate final results by NFT identifier.
-    const dedupedNfts = Array.from(new Map(finalStakedNfts.map(nft => [nft.identifier, nft])).values());
+    const dedupedNfts = Array.from(new Map(finalStakedNftsWithDuplicates.map(nft => [nft.identifier, nft])).values());
     console.log(`📊 Deduplicated staked NFT count: ${dedupedNfts.length}`);
     return dedupedNfts;
   } catch (error) {
