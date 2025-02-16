@@ -916,10 +916,16 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
         }
       });
     });
-    console.log("Raw staked NFT events (chronological order):");
-    console.table(rawStakedEvents);
+    
+    // Build CSV string from rawStakedEvents.
+    const header = "txHash,timestamp,function,identifier,sender";
+    const csvRows = rawStakedEvents.map(e =>
+      `${e.txHash},${e.timestamp},${e.function},${e.identifier},${e.sender}`
+    );
+    const csvString = [header, ...csvRows].join("\n");
+    console.log("Raw staked NFT events (CSV format):\n" + csvString);
 
-    // Validate each raw event (duplicates are preserved here).
+    // Validate each raw event (preserving duplicates).
     const validatedResults = await asyncPool(4, rawStakedEvents, async (event) => {
       const valid = await isNftCurrentlyStaked(event.identifier, contractAddress);
       return valid ? { owner: event.sender, identifier: event.identifier } : null;
@@ -937,7 +943,7 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
   }
 };
 
-// Route for staked NFTs snapshot draw
+// Route for staked NFTs snapshot draw remains the same.
 app.post('/stakedNftsSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
   try {
     const { collectionTicker, contractLabel, numberOfWinners } = req.body;
@@ -961,7 +967,6 @@ app.post('/stakedNftsSnapshotDraw', checkToken, handleUsageFee, async (req, res)
     res.status(500).json({ error: `Failed to fetch staked NFTs: ${error.message}` });
   }
 });
-
 
 
 // Start the server
