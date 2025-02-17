@@ -774,7 +774,7 @@ app.post('/esdtSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
 
 
 // Helper: fetchWithRetry wraps fetch with retries on failure (e.g. rate limit errors).
-async function fetchWithRetry(url, options = {}, retries = 20, backoff = 1000) {
+async function fetchWithRetry(url, options = {}, retries = 15, backoff = 2000) {
   for (let i = 0; i < retries; i++) {
     try {
       const response = await fetch(url, options);
@@ -783,20 +783,20 @@ async function fetchWithRetry(url, options = {}, retries = 20, backoff = 1000) {
         const delay = retryAfter ? Number(retryAfter) * 1000 : backoff;
         console.log(`Rate limit hit for ${url}. Retrying in ${delay}ms... (attempt ${i + 1})`);
         await new Promise(res => setTimeout(res, delay));
-        //backoff *= 2;
+        backoff *= 2;
         continue;
       }
       if (!response.ok) {
         console.error(`Non-OK response (${response.status}) for ${url}. Retrying in ${backoff}ms... (attempt ${i + 1})`);
         await new Promise(res => setTimeout(res, backoff));
-        //backoff *= 2;
+        backoff *= 2;
         continue;
       }
       return response;
     } catch (error) {
       console.error(`Error fetching ${url}: ${error.message}. Retrying in ${backoff}ms... (attempt ${i + 1})`);
       await new Promise(res => setTimeout(res, backoff));
-      //backoff *= 2;
+      backoff *= 2;
     }
   }
   throw new Error(`Failed to fetch ${url} after ${retries} retries`);
@@ -820,8 +820,7 @@ async function asyncPool(poolLimit, array, iteratorFn) {
   return Promise.all(ret);
 }
 
-// Updated helper function to fetch all paginated transactions using cursor-based pagination.
-// Note: We return all raw transactions (no deduplication at this stage).
+// Helper function to fetch all paginated transactions (raw events).
 const fetchAllTransactions = async (baseUrl) => {
   let allTransactions = [];
   let nextCursor = null;
@@ -841,26 +840,28 @@ const fetchAllTransactions = async (baseUrl) => {
   return allTransactions;
 };
 
-// Helper function to check if an NFT is currently staked.
-const isNftCurrentlyStaked = async (nftIdentifier, expectedSCAddress) => {
-  const url = `https://api.elrond.com/nfts/${nftIdentifier}/accounts`;
-  const response = await fetchWithRetry(url);
-  const data = await response.json();
-  const found = data.some(account =>
-    account.address.toLowerCase().trim() === expectedSCAddress.toLowerCase().trim() &&
-    Number(account.balance) > 0
-  );
-  if (!found) {
-    console.log(`NFT ${nftIdentifier} is NOT staked as expected. Accounts returned: ${JSON.stringify(data)}`);
-  } else {
-    console.log(`NFT ${nftIdentifier} is validly staked with account ${expectedSCAddress}`);
-  }
-  return found;
+// New helper: fetch all NFTs held by the smart contract for the given collection.
+const fetchScNfts = async (contractAddress, collectionTicker) => {
+  let allNfts = [];
+  let nextCursor = null;
+  do {
+    let url = `https://api.multiversx.com/accounts/${contractAddress}/nfts?size=500&collections=${collectionTicker}`;
+    if (nextCursor) {
+      url += `&cursor=${encodeURIComponent(nextCursor)}`;
+    }
+    const response = await fetchWithRetry(url);
+    const result = await response.json();
+    const nfts = result.data || result;
+    console.log(`Fetched ${nfts.length} NFTs from ${url}`);
+    allNfts.push(...nfts);
+    nextCursor = result.cursor;
+  } while (nextCursor);
+  console.log(`Total NFTs in smart contract: ${allNfts.length}`);
+  return allNfts;
 };
 
-// Helper function to fetch staked NFTs using only staking events.
-// This version collects all raw staking events (with duplicates) in chronological order,
-// then validates each event, and finally deduplicates the validated results by NFT identifier.
+// Updated helper function to fetch staked NFTs using staking events,
+// then validate them in bulk using the smart contract's NFT inventory.
 const fetchStakedNfts = async (collectionTicker, contractLabel) => {
   const contractAddresses = {
     oneDexStakedNfts: "erd1qqqqqqqqqqqqqpgqrq6gv0ljf4y9md42pe4m6mh96hcpqnpuusls97tf33",
@@ -890,7 +891,7 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
       .filter(tx => tx.status === "success")
       .sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
 
-    // Collect all raw staking events (with duplicates) in an array.
+    // Collect raw staking events (with duplicates) from successful transactions.
     const rawStakedEvents = [];
     successfulTxs.forEach(tx => {
       const transfers = (tx.action?.arguments?.transfers || []).filter(
@@ -910,8 +911,8 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
         }
       });
     });
-    
-    // Build CSV string for raw events (for debugging) in a copy-paste friendly format.
+
+    // Log raw events in a CSV-friendly format.
     const header = "txHash,timestamp,function,identifier,sender";
     const csvRows = rawStakedEvents.map(e =>
       `${e.txHash},${e.timestamp},${e.function},${e.identifier},${e.sender}`
@@ -919,16 +920,18 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
     const csvString = [header, ...csvRows].join("\n");
     console.log("Raw staked NFT events (CSV format):\n" + csvString);
 
-    // Validate each raw event (preserving duplicates).
-    const validatedResults = await asyncPool(3, rawStakedEvents, async (event) => {
-      const valid = await isNftCurrentlyStaked(event.identifier, contractAddress);
-      return valid ? { owner: event.sender, identifier: event.identifier } : null;
-    });
-    const finalStakedNftsWithDuplicates = validatedResults.filter(nft => nft !== null);
-    console.log(`📊 Validated staked NFT count (may contain duplicates): ${finalStakedNftsWithDuplicates.length}`);
+    // Fetch the current NFTs held by the smart contract in bulk.
+    const scNfts = await fetchScNfts(contractAddress, collectionTicker);
+    const validNftIds = new Set(scNfts.map(nft => nft.identifier));
+    console.log(`Valid NFT identifiers fetched from smart contract: ${[...validNftIds].join(', ')}`);
 
-    // Deduplicate final results by NFT identifier.
-    const dedupedNfts = Array.from(new Map(finalStakedNftsWithDuplicates.map(nft => [nft.identifier, nft])).values());
+    // Filter raw events based on whether the NFT identifier is in the SC list.
+    const validatedResults = rawStakedEvents.filter(event => validNftIds.has(event.identifier))
+      .map(event => ({ owner: event.sender, identifier: event.identifier }));
+    console.log(`📊 Validated staked NFT count (may contain duplicates): ${validatedResults.length}`);
+
+    // Deduplicate the final validated results by NFT identifier.
+    const dedupedNfts = Array.from(new Map(validatedResults.map(nft => [nft.identifier, nft])).values());
     console.log(`📊 Deduplicated staked NFT count: ${dedupedNfts.length}`);
     return dedupedNfts;
   } catch (error) {
@@ -946,28 +949,13 @@ app.post('/stakedNftsSnapshotDraw', checkToken, handleUsageFee, async (req, res)
       return res.status(404).json({ error: 'No staked NFTs found for this collection' });
     }
     const totalStakedCount = stakedData.length;
-    
-    // Calculate unique owners statistics.
-    const ownerCounts = stakedData.reduce((acc, nft) => {
-      const owner = nft.owner;
-      acc[owner] = (acc[owner] || 0) + 1;
-      return acc;
-    }, {});
-    const uniqueOwnersStats = Object.keys(ownerCounts)
-      .map(owner => ({
-        owner,
-        tokensCount: ownerCounts[owner]
-      }))
-      .sort((a, b) => b.tokensCount - a.tokensCount); // Sorted descending by tokensCount
-
     const shuffled = stakedData.sort(() => 0.5 - Math.random());
     const winners = shuffled.slice(0, numberOfWinners);
-    const csvStringForFinal = await generateCsv(stakedData);
+    const csvString = await generateCsv(stakedData);
     res.json({
       winners,
       totalStakedCount,
-      csvString: csvStringForFinal,
-      uniqueOwnersStats,
+      csvString,
       message: `${numberOfWinners} winners have been selected from staked NFTs in collection ${collectionTicker}.`,
       usageFeeHash: req.usageFeeHash,
     });
