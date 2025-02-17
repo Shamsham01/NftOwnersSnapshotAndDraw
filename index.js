@@ -820,42 +820,44 @@ async function asyncPool(poolLimit, array, iteratorFn) {
   return Promise.all(ret);
 }
 
-// Helper function to fetch all paginated transactions (raw events).
+// Helper function to fetch all paginated transactions using "from" based pagination.
 const fetchAllTransactions = async (baseUrl) => {
   let allTransactions = [];
-  let nextCursor = null;
+  let from = 0;
+  const batchSize = 1000;
+  let currentBatchSize = batchSize;
   do {
-    let url = baseUrl;
-    if (nextCursor) {
-      url += `&cursor=${encodeURIComponent(nextCursor)}`;
-    }
+    // Append &from= to the URL
+    const url = `${baseUrl}&from=${from}`;
     const response = await fetchWithRetry(url);
     const result = await response.json();
+    // Assuming the API returns an array directly (or under .data)
     const transactions = result.data || result;
     console.log(`Fetched ${transactions.length} transactions from ${url}`);
     allTransactions.push(...transactions);
-    nextCursor = result.cursor;
-  } while (nextCursor);
+    currentBatchSize = transactions.length;
+    from += batchSize;
+  } while (currentBatchSize === batchSize);
   console.log(`Total transactions fetched: ${allTransactions.length}`);
   return allTransactions;
 };
 
-// New helper: fetch all NFTs held by the smart contract for the given collection.
+// Helper function to fetch all NFTs held by the smart contract for the given collection using "from" pagination.
 const fetchScNfts = async (contractAddress, collectionTicker) => {
   let allNfts = [];
-  let nextCursor = null;
+  let from = 0;
+  const batchSize = 500;
+  let currentBatchSize = batchSize;
   do {
-    let url = `https://api.multiversx.com/accounts/${contractAddress}/nfts?size=500&collections=${collectionTicker}`;
-    if (nextCursor) {
-      url += `&cursor=${encodeURIComponent(nextCursor)}`;
-    }
+    const url = `https://api.multiversx.com/accounts/${contractAddress}/nfts?size=${batchSize}&collections=${collectionTicker}&from=${from}`;
     const response = await fetchWithRetry(url);
     const result = await response.json();
     const nfts = result.data || result;
     console.log(`Fetched ${nfts.length} NFTs from ${url}`);
     allNfts.push(...nfts);
-    nextCursor = result.cursor;
-  } while (nextCursor);
+    currentBatchSize = nfts.length;
+    from += batchSize;
+  } while (currentBatchSize === batchSize);
   console.log(`Total NFTs in smart contract: ${allNfts.length}`);
   return allNfts;
 };
@@ -920,7 +922,7 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
     const csvString = [header, ...csvRows].join("\n");
     console.log("Raw staked NFT events (CSV format):\n" + csvString);
 
-    // Fetch the current NFTs held by the smart contract in bulk.
+    // Fetch the current NFTs held by the smart contract.
     const scNfts = await fetchScNfts(contractAddress, collectionTicker);
     const validNftIds = new Set(scNfts.map(nft => nft.identifier));
     console.log(`Valid NFT identifiers fetched from smart contract: ${[...validNftIds].join(', ')}`);
@@ -940,9 +942,11 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
   }
 };
 
-// Route for staked NFTs snapshot draw
-app.post('/stakedNftsSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
+// ------------------ Endpoint ------------------
+
+app.post('/stakedNftsSnapshotDraw', async (req, res) => {
   try {
+    // Assume authentication and usage fee middleware have already run.
     const { collectionTicker, contractLabel, numberOfWinners } = req.body;
     const stakedData = await fetchStakedNfts(collectionTicker, contractLabel);
     if (stakedData.length === 0) {
@@ -956,13 +960,18 @@ app.post('/stakedNftsSnapshotDraw', checkToken, handleUsageFee, async (req, res)
       winners,
       totalStakedCount,
       csvString,
-      message: `${numberOfWinners} winners have been selected from staked NFTs in collection ${collectionTicker}.`,
-      usageFeeHash: req.usageFeeHash,
+      message: `${numberOfWinners} winners have been selected from staked NFTs in collection ${collectionTicker}.`
+      // Optionally attach usageFeeHash if available.
     });
   } catch (error) {
     console.error('Error during stakedNftsSnapshotDraw:', error);
     res.status(500).json({ error: `Failed to fetch staked NFTs: ${error.message}` });
   }
+});
+
+// ------------------ Start Server ------------------
+app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
 });
 
 
