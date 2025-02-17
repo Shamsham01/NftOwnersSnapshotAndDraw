@@ -944,30 +944,38 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
 
 // ------------------ Endpoint ------------------
 
-app.post('/stakedNftsSnapshotDraw', async (req, res) => {
+// Route for staked NFTs snapshot draw
+app.post('/stakedNftsSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
   try {
-    // Assume authentication and usage fee middleware have already run.
     const { collectionTicker, contractLabel, numberOfWinners } = req.body;
     const stakedData = await fetchStakedNfts(collectionTicker, contractLabel);
     if (stakedData.length === 0) {
       return res.status(404).json({ error: 'No staked NFTs found for this collection' });
     }
     const totalStakedCount = stakedData.length;
+
+    // Generate unique owner statistics (each NFT counts as 1)
+    const uniqueOwnerStats = generateUniqueOwnerStats(stakedData, "NFT");
+
+    // Randomly shuffle the staked NFTs and pick winners
     const shuffled = stakedData.sort(() => 0.5 - Math.random());
     const winners = shuffled.slice(0, numberOfWinners);
     const csvString = await generateCsv(stakedData);
+
     res.json({
       winners,
       totalStakedCount,
+      uniqueOwnerStats,
       csvString,
-      message: `${numberOfWinners} winners have been selected from staked NFTs in collection ${collectionTicker}.`
-      // Optionally attach usageFeeHash if available.
+      message: `${numberOfWinners} winners have been selected from staked NFTs in collection ${collectionTicker}.`,
+      usageFeeHash: req.usageFeeHash,
     });
   } catch (error) {
     console.error('Error during stakedNftsSnapshotDraw:', error);
     res.status(500).json({ error: `Failed to fetch staked NFTs: ${error.message}` });
   }
 });
+
 
 // ------------------ Start Server ------------------
 app.listen(PORT, () => {
