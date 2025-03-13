@@ -719,8 +719,12 @@ app.post('/sftSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
             originalBalance: owner.balance // Keep original for reference
         }));
 
-        // Generate unique owner stats with the original data
-        const uniqueOwnerStats = generateUniqueOwnerStats(sftOwners, "SFT");
+        // Generate unique owner stats with the formatted data to prevent BigInt issues
+        const dataForStats = formattedData.map(item => ({
+            address: item.address,
+            balance: item.balance // Use the pre-formatted balance string
+        }));
+        const uniqueOwnerStats = generateUniqueOwnerStats(dataForStats, "SFT");
 
         // Sort owners by balance in descending order using the original BigInt values
         const sortedOwners = [...formattedData].sort((a, b) => 
@@ -860,8 +864,13 @@ app.post('/esdtSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
             };
         });
 
-        // Step 4: Generate Unique Owner Stats with the original data
-        const uniqueOwnerStats = generateUniqueOwnerStats(esdtOwners, "ESDT", decimals);
+        // Step 4: Generate Unique Owner Stats with the formatted data
+        // Create a copy with pre-formatted balances to prevent BigInt conversion issues
+        const dataForStats = formattedData.map(item => ({
+            address: item.address,
+            balance: item.balance // Use the pre-formatted balance string
+        }));
+        const uniqueOwnerStats = generateUniqueOwnerStats(dataForStats, "ESDT", decimals);
 
         // Step 5: Sort owners by balance in descending order using the original BigInt values
         const sortedOwners = [...formattedData].sort((a, b) => 
@@ -1081,13 +1090,20 @@ app.post('/stakedNftsSnapshotDraw', checkToken, handleUsageFee, async (req, res)
     }
     const totalStakedCount = stakedData.length;
 
-    // Generate unique owner statistics (each NFT counts as 1)
-    const uniqueOwnerStats = generateUniqueOwnerStats(stakedData, "NFT");
+    // Format data to prevent any potential BigInt issues
+    const formattedData = stakedData.map(item => ({
+      owner: item.owner,
+      identifier: item.identifier,
+      balance: "1" // NFTs typically have a balance of 1
+    }));
+
+    // Generate unique owner statistics using formatted data
+    const uniqueOwnerStats = generateUniqueOwnerStats(formattedData, "NFT");
 
     // Randomly shuffle the staked NFTs and pick winners
-    const shuffled = stakedData.sort(() => 0.5 - Math.random());
+    const shuffled = formattedData.sort(() => 0.5 - Math.random());
     const winners = shuffled.slice(0, numberOfWinners);
-    const csvString = await generateCsv(stakedData);
+    const csvString = await generateCsv(formattedData);
 
     res.json({
       winners,
@@ -1275,8 +1291,13 @@ app.post('/stakedEsdtsSnapshotDraw', checkToken, handleUsageFee, async (req, res
       };
     });
 
-    // Step 4: Generate unique owner statistics with original data
-    const uniqueOwnerStats = generateUniqueOwnerStats(stakedData, "ESDT", decimals);
+    // Step 4: Generate unique owner statistics using FORMATTED data to prevent BigInt issues
+    // Create a copy of the data with balances as strings to prevent BigInt conversion issues
+    const dataForStats = formattedData.map(item => ({
+      address: item.address,
+      balance: item.balance // Use the pre-formatted balance string
+    }));
+    const uniqueOwnerStats = generateUniqueOwnerStats(dataForStats, "ESDT", decimals);
 
     // Step 5: Sort stakers by balance in descending order using the original BigInt values
     const sortedStakers = [...formattedData].sort((a, b) => 
