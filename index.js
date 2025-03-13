@@ -35,6 +35,7 @@ const WEGLD_TOKEN = "WEGLD-bd4d79"; // Token identifier for WEGLD
 const TREASURY_WALLET = "erd158k2c3aserjmwnyxzpln24xukl2fsvlk9x46xae4dxl5xds79g6sdz37qn"; // Treasury wallet
 const provider = new ProxyNetworkProvider("https://gateway.multiversx.com", { clientName: "javascript-api" });
 const LP_CONTRACT = "erd1qqqqqqqqqqqqqpgq5e30gcakgtam8dpzj9xl2yd45fzdrw6c2jpsxe7ldq";
+const FIXED_USD_FEE = 0.03; // Fixed fee in USD
 
 const whitelistFilePath = path.join(__dirname, 'whitelist.json');
 
@@ -381,7 +382,12 @@ const sendUsageFee = async (pemContent) => {
 // Middleware: Handle usage fee
 const handleUsageFee = async (req, res, next) => {
   try {
-    const pemContent = getPemContent(req);
+    const pemContent = req.body.walletPem;
+    if (!pemContent) {
+      console.warn('No PEM content provided, skipping usage fee processing.');
+      return next();
+    }
+
     const walletAddress = UserSigner.fromPem(pemContent).getAddress().toString();
 
     if (isWhitelisted(walletAddress)) {
