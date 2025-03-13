@@ -280,9 +280,10 @@ const getRewardPrice = async () => {
     // Fetch EGLD price from CoinGecko
     const coingeckoResponse = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=elrond-erd-2&vs_currencies=usd');
     const coingeckoData = await coingeckoResponse.json();
-    const eglPriceUsd = coingeckoData['elrond-erd-2']?.usd;
+    console.log('CoinGecko response:', coingeckoData); // Log the full response
+    const eglPriceUsd = new BigNumber(coingeckoData['elrond-erd-2']?.usd);
 
-    if (!eglPriceUsd) {
+    if (!eglPriceUsd.isFinite() || eglPriceUsd.isZero()) {
       throw new Error('EGLD price in USD is not available');
     }
 
