@@ -1185,16 +1185,39 @@ app.post('/stakedEsdtsSnapshotDraw', checkToken, handleUsageFee, async (req, res
     );
     
     // Step 5: Select top winners from the sorted list (no random shuffle needed)
-    const winners = sortedStakers.slice(0, numberOfWinners).map(winner => ({
-      ...winner,
-      balance: (Number(winner.balance || 0) / 10 ** decimals).toFixed(decimals)
-    }));
+    const winners = sortedStakers.slice(0, numberOfWinners).map(winner => {
+      // Use BigInt for all calculations to maintain precision
+      const balanceBigInt = BigInt(winner.balance || '0');
+      const divisor = BigInt(10) ** BigInt(decimals);
+      // Get the whole number part
+      const wholePart = (balanceBigInt / divisor).toString();
+      
+      // Get the decimal part with proper padding
+      let decimalPart = (balanceBigInt % divisor).toString().padStart(decimals, '0');
+      
+      // Format the final balance string with proper decimal places
+      const formattedBalance = `${wholePart}.${decimalPart}`;
+      
+      return {
+        ...winner,
+        balance: formattedBalance
+      };
+    });
     
     // Step 6: Generate CSV with properly formatted balances (using sorted data)
-    const csvString = await generateCsv(sortedStakers.map(staker => ({
-      address: staker.address,
-      balance: (Number(staker.balance || 0) / 10 ** decimals).toFixed(decimals)
-    })));
+    const csvString = await generateCsv(sortedStakers.map(staker => {
+      // Use the same BigInt formatting logic for CSV balances
+      const balanceBigInt = BigInt(staker.balance || '0');
+      const divisor = BigInt(10) ** BigInt(decimals);
+      const wholePart = (balanceBigInt / divisor).toString();
+      let decimalPart = (balanceBigInt % divisor).toString().padStart(decimals, '0');
+      const formattedBalance = `${wholePart}.${decimalPart}`;
+      
+      return {
+        address: staker.address,
+        balance: formattedBalance
+      };
+    }));
 
     res.json({
       token,
