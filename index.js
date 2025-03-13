@@ -816,18 +816,47 @@ app.post('/esdtSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
         // Step 3: Generate Unique Owner Stats
         const uniqueOwnerStats = generateUniqueOwnerStats(esdtOwners, "ESDT", decimals);
 
-        // Step 4: Select Random Winners
-        const shuffled = esdtOwners.sort(() => 0.5 - Math.random());
-        const winners = shuffled.slice(0, numberOfWinners).map(winner => ({
-            ...winner,
-            balance: (Number(winner.balance || 0) / 10 ** decimals).toFixed(decimals)
-        }));
+        // Step 4: Sort owners by balance in descending order
+        const sortedOwners = [...esdtOwners].sort((a, b) => 
+            BigInt(b.balance || '0') - BigInt(a.balance || '0')
+        );
 
-        // Step 5: Generate CSV Output
-        const csvString = await generateCsv(esdtOwners.map(owner => ({
-            address: owner.address,
-            balance: (Number(owner.balance || 0) / 10 ** decimals).toFixed(decimals),
-        })));
+        // Step 5: Select either random winners or top winners by balance
+        // We'll keep the random selection for backward compatibility
+        const shuffled = esdtOwners.sort(() => 0.5 - Math.random());
+        const winners = shuffled.slice(0, numberOfWinners).map(winner => {
+            // Use BigInt for all calculations to maintain precision
+            const balanceBigInt = BigInt(winner.balance || '0');
+            const divisor = BigInt(10) ** BigInt(decimals);
+            // Get the whole number part
+            const wholePart = (balanceBigInt / divisor).toString();
+            
+            // Get the decimal part with proper padding
+            let decimalPart = (balanceBigInt % divisor).toString().padStart(decimals, '0');
+            
+            // Format the final balance string with proper decimal places
+            const formattedBalance = `${wholePart}.${decimalPart}`;
+            
+            return {
+                ...winner,
+                balance: formattedBalance
+            };
+        });
+
+        // Step 6: Generate CSV with properly formatted balances
+        const csvString = await generateCsv(esdtOwners.map(owner => {
+            // Use the same BigInt formatting logic for CSV balances
+            const balanceBigInt = BigInt(owner.balance || '0');
+            const divisor = BigInt(10) ** BigInt(decimals);
+            const wholePart = (balanceBigInt / divisor).toString();
+            let decimalPart = (balanceBigInt % divisor).toString().padStart(decimals, '0');
+            const formattedBalance = `${wholePart}.${decimalPart}`;
+            
+            return {
+                address: owner.address,
+                balance: formattedBalance
+            };
+        }));
 
         res.json({
             token,
@@ -965,7 +994,12 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
     const allTransactions = await fetchAllTransactions(baseUrl);
     const successfulTxs = allTransactions
       .filter(tx => tx.status === "success")
-      .sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
+      .sort((a, b) => {
+        // Safely compare timestamps as strings or convert to BigInt if necessary
+        const tsA = BigInt(String(a.timestamp || '0'));
+        const tsB = BigInt(String(b.timestamp || '0'));
+        return tsA < tsB ? -1 : tsA > tsB ? 1 : 0;
+      });
 
     // Collect raw staking events (with duplicates) from successful transactions.
     const rawStakedEvents = [];
