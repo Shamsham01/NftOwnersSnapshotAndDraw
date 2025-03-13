@@ -1022,7 +1022,7 @@ app.post('/stakedNftsSnapshotDraw', checkToken, handleUsageFee, async (req, res)
   }
 });
 
-// Helper function to fetch staked ESDT tokens similar to fetchStakedNfts but for ESDT tokens
+// Helper function to fetch staked ESDT tokens by tracking staking and unstaking events
 const fetchStakedEsdts = async (token, stakingContractAddress) => {
   if (!stakingContractAddress) {
     throw new Error("Staking smart contract address is required");
@@ -1038,81 +1038,86 @@ const fetchStakedEsdts = async (token, stakingContractAddress) => {
     
     const successfulTxs = allTransactions
       .filter(tx => tx.status === "success")
-      .sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
+      .sort((a, b) => Number(a.timestamp) - Number(b.timestamp)); // Sort chronologically
     
     console.log(`Found ${successfulTxs.length} successful transactions for token ${token}`);
 
-    // Step 1: Collect all staking events
-    const stakingEvents = [];
-    const validStakingFunctions = ["stake", "userStake"]; // The two common staking functions
+    // Track user balances by processing staking and unstaking events chronologically
+    const userBalances = {};
+    let totalStaked = BigInt(0);
     
+    // Process all transactions chronologically
     successfulTxs.forEach(tx => {
-      // Check if this is a staking transaction (stake or userStake function)
-      if (validStakingFunctions.includes(tx.function)) {
-        // For ESDT tokens, we need to look at the action.arguments.transfers
-        const transfers = tx.action?.arguments?.transfers || [];
-        transfers.forEach(transfer => {
-          if (transfer.identifier === token) {
-            stakingEvents.push({
-              txHash: tx.hash || tx.nonce,
-              timestamp: tx.timestamp,
-              function: tx.function,
-              sender: tx.sender,
-              amount: transfer.value || "0",
-              tokenIdentifier: transfer.identifier
-            });
-          }
-        });
-      }
-    });
-    
-    console.log(`Found ${stakingEvents.length} staking events for token ${token}`);
-    
-    // Step 2: Fetch current token balance in the smart contract to validate
-    const tokenHoldings = await fetchContractTokenBalance(stakingContractAddress, token);
-    console.log(`Current token balance in contract: ${tokenHoldings}`);
-    
-    // Step 3: Calculate how much is staked by each address
-    // Since we can't know precisely which tokens were unstaked, we'll use the current total
-    // and distribute it proportionally based on staking events
-    const stakedByAddress = {};
-    let totalStakedFromEvents = BigInt(0);
-    
-    stakingEvents.forEach(event => {
-      const amount = BigInt(event.amount);
-      if (!stakedByAddress[event.sender]) {
-        stakedByAddress[event.sender] = BigInt(0);
-      }
-      stakedByAddress[event.sender] += amount;
-      totalStakedFromEvents += amount;
-    });
-    
-    // If there are no staking events or total staked amount is 0, return empty result
-    if (totalStakedFromEvents === BigInt(0) || BigInt(tokenHoldings) === BigInt(0)) {
-      return [];
-    }
-    
-    // Step 4: Adjust stakings proportionally to match the current balance in SC
-    const currentContractBalance = BigInt(tokenHoldings);
-    const stakedData = [];
-    
-    for (const [address, stakedAmount] of Object.entries(stakedByAddress)) {
-      // Calculate the proportional share of the current balance
-      // proportionalAmount = (address_staked / total_staked) * current_balance
-      let proportionalAmount;
-      if (totalStakedFromEvents === BigInt(0)) {
-        proportionalAmount = BigInt(0);
-      } else {
-        proportionalAmount = (stakedAmount * currentContractBalance) / totalStakedFromEvents;
+      // Skip transactions without action or arguments
+      if (!tx.action || !tx.action.arguments) return;
+      
+      const transfers = tx.action.arguments.transfers || [];
+      if (!transfers.length) return;
+      
+      // Identify the relevant transfer for our token
+      const relevantTransfer = transfers.find(t => t.token === token || t.ticker === token);
+      if (!relevantTransfer) return;
+      
+      const amount = BigInt(relevantTransfer.value || '0');
+      if (amount === BigInt(0)) return;
+      
+      // CASE 1: Staking event (User → SC, function is stake/userStake)
+      if ((tx.function === 'stake' || tx.function === 'userStake') && 
+          tx.receiver === stakingContractAddress) {
+        
+        const user = tx.sender;
+        if (!userBalances[user]) userBalances[user] = BigInt(0);
+        
+        userBalances[user] += amount;
+        totalStaked += amount;
+        
+        console.log(`[STAKING] User ${user} staked ${amount.toString()} tokens at ${new Date(tx.timestamp * 1000).toISOString()}`);
       }
       
-      if (proportionalAmount > BigInt(0)) {
-        stakedData.push({
-          address: address,
-          balance: proportionalAmount.toString()
-        });
+      // CASE 2: Unstaking event (SC → User, function is ESDTTransfer)
+      else if (tx.function === 'ESDTTransfer' && 
+               tx.sender === stakingContractAddress) {
+        
+        const user = tx.receiver;
+        if (!userBalances[user]) userBalances[user] = BigInt(0);
+        
+        // Make sure we don't go below zero
+        if (userBalances[user] >= amount) {
+          userBalances[user] -= amount;
+          totalStaked -= amount;
+          console.log(`[UNSTAKING] User ${user} unstaked ${amount.toString()} tokens at ${new Date(tx.timestamp * 1000).toISOString()}`);
+        } else {
+          console.warn(`Warning: Unstaking event would result in negative balance for user ${user}. Setting to 0.`);
+          totalStaked -= userBalances[user];
+          userBalances[user] = BigInt(0);
+        }
       }
+      
+      // There may be other relevant transactions like rewards distribution
+      // but for the staking calculation we focus on stake/unstake events
+    });
+    
+    console.log(`Total staked amount calculated from transactions: ${totalStaked.toString()}`);
+    
+    // Validate the calculated total against the current contract balance
+    const contractBalance = BigInt(await fetchContractTokenBalance(stakingContractAddress, token));
+    console.log(`Current contract balance: ${contractBalance.toString()}`);
+    
+    // If there's a significant discrepancy, log it but continue with the calculated values
+    // This can happen due to rewards distribution or other SC operations
+    if (contractBalance > totalStaked) {
+      console.log(`Contract balance exceeds calculated staked amount by ${(contractBalance - totalStaked).toString()} tokens`);
+    } else if (totalStaked > contractBalance) {
+      console.log(`Calculated staked amount exceeds contract balance by ${(totalStaked - contractBalance).toString()} tokens`);
     }
+    
+    // Convert the user balances map to the expected format for the API response
+    const stakedData = Object.entries(userBalances)
+      .filter(([_, balance]) => balance > BigInt(0))
+      .map(([address, balance]) => ({
+        address,
+        balance: balance.toString()
+      }));
     
     console.log(`Found ${stakedData.length} addresses with staked ${token} tokens`);
     return stakedData;
