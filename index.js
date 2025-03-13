@@ -463,9 +463,8 @@ app.post('/nftSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
         // Select random winners
         const shuffled = filteredAddresses.sort(() => 0.5 - Math.random());
         const winners = shuffled.slice(0, numberOfWinners).map(winner => ({
-            owner: winner.owner,
-            identifier: winner.identifier,
-            metadataFileName: winner.metadataFileName,
+            ...winner,
+            balance: (Number(winner.balance || 0) / 10 ** decimals).toFixed(decimals),
         }));
 
         // Return only winners without CSV or unique owner stats
