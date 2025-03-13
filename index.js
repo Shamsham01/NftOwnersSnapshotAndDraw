@@ -712,31 +712,28 @@ app.post('/sftSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
             return res.status(404).json({ error: 'No SFT owners found for the specified collection and editions' });
         }
 
-        // ✅ Generate unique owner stats with updated function
+        // First, format the data to prevent BigInt conversion issues
+        const formattedData = sftOwners.map(owner => ({
+            address: owner.address,
+            balance: String(BigInt(owner.balance || '0')), // Convert to string to avoid BigInt issues
+            originalBalance: owner.balance // Keep original for reference
+        }));
+
+        // Generate unique owner stats with the original data
         const uniqueOwnerStats = generateUniqueOwnerStats(sftOwners, "SFT");
 
-        // Sort owners by balance in descending order
-        const sortedOwners = [...sftOwners].sort((a, b) => 
-            BigInt(b.balance || '0') - BigInt(a.balance || '0')
+        // Sort owners by balance in descending order using the original BigInt values
+        const sortedOwners = [...formattedData].sort((a, b) => 
+            BigInt(b.originalBalance || '0') - BigInt(a.originalBalance || '0')
         );
 
         // Either randomly select winners (original behavior) or use top holders
-        // For backward compatibility, we'll keep random selection
-        const shuffled = sftOwners.sort(() => 0.5 - Math.random());
-        const winners = shuffled.slice(0, numberOfWinners).map(winner => {
-            // Format the balance properly to avoid BigInt conversion issues
-            return {
-                ...winner,
-                // SFTs typically have 0 decimals, but format safely anyway
-                balance: BigInt(winner.balance || '0').toString()
-            };
-        });
+        // For backward compatibility, we'll keep random selection but use formatted data
+        const shuffled = [...formattedData].sort(() => 0.5 - Math.random()); // Use a copy for random sort
+        const winners = shuffled.slice(0, numberOfWinners);
 
         // Generate CSV with properly formatted balances
-        const csvString = await generateCsv(sftOwners.map(owner => ({
-            address: owner.address,
-            balance: BigInt(owner.balance || '0').toString(),
-        })));
+        const csvString = await generateCsv(formattedData);
 
         // Response payload
         res.json({
@@ -855,27 +852,25 @@ app.post('/esdtSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
             BigInt(b.balance || '0') - BigInt(a.balance || '0')
         );
 
-        // Step 5: Select either random winners or top winners by balance
-        // We'll keep the random selection for backward compatibility
-        const shuffled = esdtOwners.sort(() => 0.5 - Math.random());
-        const winners = shuffled.slice(0, numberOfWinners).map(winner => {
-            // Use BigInt for all calculations to maintain precision
-            const balanceBigInt = BigInt(winner.balance || '0');
+        // Step 5: Prepare data for random selection by converting balance to formatted strings first
+        // This prevents BigInt conversion errors during random sorting
+        const formatForShuffling = esdtOwners.map(owner => {
+            const balanceBigInt = BigInt(owner.balance || '0');
             const divisor = BigInt(10) ** BigInt(decimals);
-            // Get the whole number part
             const wholePart = (balanceBigInt / divisor).toString();
-            
-            // Get the decimal part with proper padding
-            let decimalPart = (balanceBigInt % divisor).toString().padStart(decimals, '0');
-            
-            // Format the final balance string with proper decimal places
+            const decimalPart = (balanceBigInt % divisor).toString().padStart(decimals, '0');
             const formattedBalance = `${wholePart}.${decimalPart}`;
             
             return {
-                ...winner,
-                balance: formattedBalance
+                address: owner.address,
+                balance: formattedBalance,
+                originalBalance: owner.balance // Keep original for reference if needed
             };
         });
+        
+        // Now we can safely shuffle without BigInt conversion issues
+        const shuffled = formatForShuffling.sort(() => 0.5 - Math.random());
+        const winners = shuffled.slice(0, numberOfWinners);
 
         // Step 6: Generate CSV with properly formatted balances
         const csvString = await generateCsv(esdtOwners.map(owner => {
@@ -1276,49 +1271,35 @@ app.post('/stakedEsdtsSnapshotDraw', checkToken, handleUsageFee, async (req, res
     const totalStakedCount = stakedData.length;
     console.log(`Found ${totalStakedCount} stakers`);
 
-    // Step 3: Generate unique owner statistics with proper decimal conversion
-    const uniqueOwnerStats = generateUniqueOwnerStats(stakedData, "ESDT", decimals);
-    // Note: uniqueOwnerStats are already sorted by tokensCount in descending order in the generateUniqueOwnerStats function
-
-    // Step 4: Sort stakers by balance in descending order
-    const sortedStakers = [...stakedData].sort((a, b) => 
-      BigInt(b.balance || '0') - BigInt(a.balance || '0')
-    );
-    
-    // Step 5: Select top winners from the sorted list (no random shuffle needed)
-    const winners = sortedStakers.slice(0, numberOfWinners).map(winner => {
-      // Use BigInt for all calculations to maintain precision
-      const balanceBigInt = BigInt(winner.balance || '0');
-      const divisor = BigInt(10) ** BigInt(decimals);
-      // Get the whole number part
-      const wholePart = (balanceBigInt / divisor).toString();
-      
-      // Get the decimal part with proper padding
-      let decimalPart = (balanceBigInt % divisor).toString().padStart(decimals, '0');
-      
-      // Format the final balance string with proper decimal places
-      const formattedBalance = `${wholePart}.${decimalPart}`;
-      
-      return {
-        ...winner,
-        balance: formattedBalance
-      };
-    });
-    
-    // Step 6: Generate CSV with properly formatted balances (using sorted data)
-    const csvString = await generateCsv(sortedStakers.map(staker => {
-      // Use the same BigInt formatting logic for CSV balances
+    // Step 3: Convert all balances to formatted strings first
+    // This prevents BigInt conversion issues during sorting
+    const formattedData = stakedData.map(staker => {
       const balanceBigInt = BigInt(staker.balance || '0');
       const divisor = BigInt(10) ** BigInt(decimals);
       const wholePart = (balanceBigInt / divisor).toString();
-      let decimalPart = (balanceBigInt % divisor).toString().padStart(decimals, '0');
-      const formattedBalance = `${wholePart}.${decimalPart}`;
+      const decimalPart = (balanceBigInt % divisor).toString().padStart(decimals, '0');
       
       return {
         address: staker.address,
-        balance: formattedBalance
+        balance: `${wholePart}.${decimalPart}`,
+        originalBalance: staker.balance // Keep original for reference
       };
-    }));
+    });
+
+    // Step 4: Generate unique owner statistics
+    const uniqueOwnerStats = generateUniqueOwnerStats(stakedData, "ESDT", decimals);
+
+    // Step 5: Sort stakers by balance in descending order using the original BigInt values
+    const sortedStakers = [...formattedData].sort((a, b) => {
+      // We compare using the original BigInt values
+      return BigInt(b.originalBalance || '0') - BigInt(a.originalBalance || '0');
+    });
+    
+    // Step 6: Select top winners from the sorted list
+    const winners = sortedStakers.slice(0, numberOfWinners);
+    
+    // Step 7: Generate CSV using the formatted data
+    const csvString = await generateCsv(formattedData);
 
     res.json({
       token,
