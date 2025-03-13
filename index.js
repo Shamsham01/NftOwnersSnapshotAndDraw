@@ -1177,17 +1177,21 @@ app.post('/stakedEsdtsSnapshotDraw', checkToken, handleUsageFee, async (req, res
 
     // Step 3: Generate unique owner statistics with proper decimal conversion
     const uniqueOwnerStats = generateUniqueOwnerStats(stakedData, "ESDT", decimals);
+    // Note: uniqueOwnerStats are already sorted by tokensCount in descending order in the generateUniqueOwnerStats function
 
-    // Step 4: Randomly shuffle the stakers and pick winners
-    const shuffled = stakedData.sort(() => 0.5 - Math.random());
-    // Apply proper decimal formatting to winners
-    const winners = shuffled.slice(0, numberOfWinners).map(winner => ({
+    // Step 4: Sort stakers by balance in descending order
+    const sortedStakers = [...stakedData].sort((a, b) => 
+      BigInt(b.balance || '0') - BigInt(a.balance || '0')
+    );
+    
+    // Step 5: Select top winners from the sorted list (no random shuffle needed)
+    const winners = sortedStakers.slice(0, numberOfWinners).map(winner => ({
       ...winner,
       balance: (Number(winner.balance || 0) / 10 ** decimals).toFixed(decimals)
     }));
     
-    // Step 5: Generate CSV with properly formatted balances 
-    const csvString = await generateCsv(stakedData.map(staker => ({
+    // Step 6: Generate CSV with properly formatted balances (using sorted data)
+    const csvString = await generateCsv(sortedStakers.map(staker => ({
       address: staker.address,
       balance: (Number(staker.balance || 0) / 10 ** decimals).toFixed(decimals)
     })));
@@ -1199,7 +1203,7 @@ app.post('/stakedEsdtsSnapshotDraw', checkToken, handleUsageFee, async (req, res
       uniqueOwnerStats,
       winners,
       csvString,
-      message: `${numberOfWinners} winners have been selected from stakers of ${token}.`,
+      message: `${numberOfWinners} winners have been selected from stakers of ${token}, sorted by balance in descending order.`,
       usageFeeHash: req.usageFeeHash,
     });
   } catch (error) {
