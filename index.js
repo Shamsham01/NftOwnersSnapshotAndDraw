@@ -844,17 +844,9 @@ app.post('/esdtSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
 
         console.log(`Fetched ${esdtOwners.length} ESDT owners`);
 
-        // Step 3: Generate Unique Owner Stats
-        const uniqueOwnerStats = generateUniqueOwnerStats(esdtOwners, "ESDT", decimals);
-
-        // Step 4: Sort owners by balance in descending order
-        const sortedOwners = [...esdtOwners].sort((a, b) => 
-            BigInt(b.balance || '0') - BigInt(a.balance || '0')
-        );
-
-        // Step 5: Prepare data for random selection by converting balance to formatted strings first
-        // This prevents BigInt conversion errors during random sorting
-        const formatForShuffling = esdtOwners.map(owner => {
+        // Step 3: Format the data COMPLETELY before any sorting or operations
+        // This prevents ALL BigInt conversion issues during subsequent operations
+        const formattedData = esdtOwners.map(owner => {
             const balanceBigInt = BigInt(owner.balance || '0');
             const divisor = BigInt(10) ** BigInt(decimals);
             const wholePart = (balanceBigInt / divisor).toString();
@@ -864,28 +856,26 @@ app.post('/esdtSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
             return {
                 address: owner.address,
                 balance: formattedBalance,
-                originalBalance: owner.balance // Keep original for reference if needed
+                originalBalance: owner.balance // Keep original for reference
             };
         });
-        
+
+        // Step 4: Generate Unique Owner Stats with the original data
+        const uniqueOwnerStats = generateUniqueOwnerStats(esdtOwners, "ESDT", decimals);
+
+        // Step 5: Sort owners by balance in descending order using the original BigInt values
+        const sortedOwners = [...formattedData].sort((a, b) => 
+            BigInt(b.originalBalance || '0') - BigInt(a.originalBalance || '0')
+        );
+
+        // Step 6: Create a COPY for random selection (with all values as strings)
         // Now we can safely shuffle without BigInt conversion issues
-        const shuffled = formatForShuffling.sort(() => 0.5 - Math.random());
+        const shufflableCopy = [...formattedData];
+        const shuffled = shufflableCopy.sort(() => 0.5 - Math.random());
         const winners = shuffled.slice(0, numberOfWinners);
 
-        // Step 6: Generate CSV with properly formatted balances
-        const csvString = await generateCsv(esdtOwners.map(owner => {
-            // Use the same BigInt formatting logic for CSV balances
-            const balanceBigInt = BigInt(owner.balance || '0');
-            const divisor = BigInt(10) ** BigInt(decimals);
-            const wholePart = (balanceBigInt / divisor).toString();
-            let decimalPart = (balanceBigInt % divisor).toString().padStart(decimals, '0');
-            const formattedBalance = `${wholePart}.${decimalPart}`;
-            
-            return {
-                address: owner.address,
-                balance: formattedBalance
-            };
-        }));
+        // Step 7: Generate CSV with the already formatted data
+        const csvString = await generateCsv(formattedData);
 
         res.json({
             token,
@@ -1271,8 +1261,7 @@ app.post('/stakedEsdtsSnapshotDraw', checkToken, handleUsageFee, async (req, res
     const totalStakedCount = stakedData.length;
     console.log(`Found ${totalStakedCount} stakers`);
 
-    // Step 3: Convert all balances to formatted strings first
-    // This prevents BigInt conversion issues during sorting
+    // Step 3: Format ALL data to prevent ANY BigInt conversion issues
     const formattedData = stakedData.map(staker => {
       const balanceBigInt = BigInt(staker.balance || '0');
       const divisor = BigInt(10) ** BigInt(decimals);
@@ -1282,23 +1271,22 @@ app.post('/stakedEsdtsSnapshotDraw', checkToken, handleUsageFee, async (req, res
       return {
         address: staker.address,
         balance: `${wholePart}.${decimalPart}`,
-        originalBalance: staker.balance // Keep original for reference
+        originalBalance: staker.balance // Keep original for sorting
       };
     });
 
-    // Step 4: Generate unique owner statistics
+    // Step 4: Generate unique owner statistics with original data
     const uniqueOwnerStats = generateUniqueOwnerStats(stakedData, "ESDT", decimals);
 
     // Step 5: Sort stakers by balance in descending order using the original BigInt values
-    const sortedStakers = [...formattedData].sort((a, b) => {
-      // We compare using the original BigInt values
-      return BigInt(b.originalBalance || '0') - BigInt(a.originalBalance || '0');
-    });
+    const sortedStakers = [...formattedData].sort((a, b) => 
+      BigInt(b.originalBalance || '0') - BigInt(a.originalBalance || '0')
+    );
     
     // Step 6: Select top winners from the sorted list
     const winners = sortedStakers.slice(0, numberOfWinners);
     
-    // Step 7: Generate CSV using the formatted data
+    // Step 7: Generate CSV using the already formatted data
     const csvString = await generateCsv(formattedData);
 
     res.json({
