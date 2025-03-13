@@ -790,7 +790,10 @@ app.post('/esdtSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
 
         // Step 4: Select Random Winners
         const shuffled = esdtOwners.sort(() => 0.5 - Math.random());
-        const winners = shuffled.slice(0, numberOfWinners);
+        const winners = shuffled.slice(0, numberOfWinners).map(winner => ({
+            ...winner,
+            balance: (Number(winner.balance || 0) / 10 ** decimals).toFixed(decimals)
+        }));
 
         // Step 5: Generate CSV Output
         const csvString = await generateCsv(esdtOwners.map(owner => ({
