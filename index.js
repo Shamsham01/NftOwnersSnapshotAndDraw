@@ -418,19 +418,31 @@ const generateUniqueOwnerStats = (data, assetType = "NFT", decimals = 0) => {
             const balanceBigInt = BigInt(balance || '0');
             stats[account] += Number(balanceBigInt.toString());
         } else if (assetType === "ESDT") {
-            // ESDT: Convert balance using BigInt operations instead of Number conversion
-            const balanceBigInt = BigInt(balance || '0');
-            const divisor = BigInt(10) ** BigInt(decimals);
-            const wholePartBigInt = balanceBigInt / divisor;
-            const decimalPartBigInt = balanceBigInt % divisor;
+            // ESDT: Handle both raw balance strings and formatted decimal strings
+            let numericValue;
+            if (balance && balance.includes('.')) {
+                // If balance is already a formatted string with a decimal point
+                numericValue = parseFloat(balance);
+            } else {
+                // If balance is a raw blockchain value, convert using BigInt
+                try {
+                    const balanceBigInt = BigInt(balance || '0');
+                    const divisor = BigInt(10) ** BigInt(decimals);
+                    const wholePartBigInt = balanceBigInt / divisor;
+                    const decimalPartBigInt = balanceBigInt % divisor;
+                    
+                    // Convert to string representation with decimal point
+                    const wholePartStr = wholePartBigInt.toString();
+                    const decimalPartStr = decimalPartBigInt.toString().padStart(decimals, '0');
+                    
+                    // Convert to float for stats calculation
+                    numericValue = parseFloat(`${wholePartStr}.${decimalPartStr}`);
+                } catch (error) {
+                    console.warn(`Error parsing balance: ${balance}. Using 0 instead.`, error);
+                    numericValue = 0;
+                }
+            }
             
-            // Convert to string representation with decimal point
-            const wholePartStr = wholePartBigInt.toString();
-            const decimalPartStr = decimalPartBigInt.toString().padStart(decimals, '0');
-            
-            // For stats, we still need a numeric value for sorting and summing
-            // Convert carefully and handle potential precision issues
-            const numericValue = parseFloat(`${wholePartStr}.${decimalPartStr}`);
             stats[account] += numericValue;
         }
     });
