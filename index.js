@@ -270,66 +270,133 @@ const isWhitelisted = (walletAddress) => {
     return whitelist.some(entry => entry.walletAddress === walletAddress);
 };
 
-// Function to send usage fee
+// Helper: Fetch REWARD token price from LP pool
+const getRewardPrice = async () => {
+  try {
+    // Fetch EGLD price from CoinGecko
+    const coingeckoResponse = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=elrond-erd-2&vs_currencies=usd');
+    const coingeckoData = await coingeckoResponse.json();
+    const eglPriceUsd = new BigNumber(coingeckoData['elrond-erd-2'].usd);
+
+    // Get LP pool data
+    const lpResponse = await fetch(`https://api.multiversx.com/accounts/${LP_CONTRACT}/tokens`);
+    const lpData = await lpResponse.json();
+
+    // Find REWARD and WEGLD reserves
+    const rewardReserve = lpData.find(token => token.identifier === REWARD_TOKEN)?.balance || '0';
+    const wegldReserve = lpData.find(token => token.identifier === WEGLD_TOKEN)?.balance || '0';
+
+    // Get token decimals
+    const rewardDecimals = await getTokenDecimals(REWARD_TOKEN);
+    const wegldDecimals = await getTokenDecimals(WEGLD_TOKEN);
+
+    // Calculate price using BigNumber for precise decimal arithmetic
+    const rewardReserveBN = new BigNumber(rewardReserve);
+    const wegldReserveBN = new BigNumber(wegldReserve);
+    
+    if (rewardReserveBN.isZero()) {
+      throw new Error('REWARD reserve is zero');
+    }
+
+    // Calculate REWARD/WEGLD ratio
+    const rewardInWegld = wegldReserveBN
+      .multipliedBy(new BigNumber(10).pow(rewardDecimals))
+      .dividedBy(rewardReserveBN.multipliedBy(new BigNumber(10).pow(wegldDecimals)));
+
+    // Calculate final USD price using EGLD price from CoinGecko
+    const rewardPriceUsd = rewardInWegld.multipliedBy(eglPriceUsd);
+
+    if (!rewardPriceUsd.isFinite() || rewardPriceUsd.isZero()) {
+      throw new Error('Invalid REWARD price calculation');
+    }
+
+    return rewardPriceUsd.toNumber();
+  } catch (error) {
+    console.error('Error fetching REWARD price:', error);
+    throw error;
+  }
+};
+
+// Helper: Calculate dynamic usage fee based on REWARD price
+const calculateDynamicUsageFee = async () => {
+  const rewardPrice = await getRewardPrice();
+  
+  if (rewardPrice <= 0) {
+    throw new Error('Invalid REWARD token price');
+  }
+
+  const rewardAmount = new BigNumber(FIXED_USD_FEE).dividedBy(rewardPrice);
+  const decimals = await getTokenDecimals(REWARD_TOKEN);
+  
+  // Ensure the amount is not too small or too large
+  if (!rewardAmount.isFinite() || rewardAmount.isZero()) {
+    throw new Error('Invalid usage fee calculation');
+  }
+
+  return convertAmountToBlockchainValue(rewardAmount, decimals);
+};
+
+// Helper: Send usage fee transaction
 const sendUsageFee = async (pemContent) => {
-    const signer = UserSigner.fromPem(pemContent);
-    const senderAddress = signer.getAddress();
-    const receiverAddress = new Address(TREASURY_WALLET);
+  const signer = UserSigner.fromPem(pemContent);
+  const senderAddress = signer.getAddress();
+  const receiverAddress = new Address(TREASURY_WALLET);
 
-    const accountOnNetwork = await provider.getAccount(senderAddress);
-    const nonce = accountOnNetwork.nonce;
+  const accountOnNetwork = await provider.getAccount(senderAddress);
+  const nonce = accountOnNetwork.nonce;
 
-    const decimals = await getTokenDecimals(REWARD_TOKEN);
-    const convertedAmount = convertAmountToBlockchainValue(USAGE_FEE, decimals);
+  // Calculate dynamic fee
+  const dynamicFeeAmount = await calculateDynamicUsageFee();
 
-    const factoryConfig = new TransactionsFactoryConfig({ chainID: "1" });
-    const factory = new TransferTransactionsFactory({ config: factoryConfig });
+  const factoryConfig = new TransactionsFactoryConfig({ chainID: "1" });
+  const factory = new TransferTransactionsFactory({ config: factoryConfig });
 
-    const tx = factory.createTransactionForESDTTokenTransfer({
-        sender: senderAddress,
-        receiver: receiverAddress,
-        tokenTransfers: [
-            new TokenTransfer({
-                token: new Token({ identifier: REWARD_TOKEN }),
-                amount: BigInt(convertedAmount),
-            }),
-        ],
-    });
+  const tx = factory.createTransactionForESDTTokenTransfer({
+    sender: senderAddress,
+    receiver: receiverAddress,
+    tokenTransfers: [
+      new TokenTransfer({
+        token: new Token({ identifier: REWARD_TOKEN }),
+        amount: BigInt(dynamicFeeAmount),
+      }),
+    ],
+  });
 
-    tx.nonce = nonce;
-    tx.gasLimit = BigInt(500000);
+  tx.nonce = nonce;
+  tx.gasLimit = BigInt(500000);
 
-    await signer.sign(tx);
-    const txHash = await provider.sendTransaction(tx);
+  await signer.sign(tx);
+  const txHash = await provider.sendTransaction(tx);
 
-    const status = await checkTransactionStatus(txHash.toString());
-    if (status.status !== "success") {
-        throw new Error('UsageFee transaction failed. Ensure sufficient REWARD tokens are available.');
-    }
-    return txHash.toString();
+  const status = await checkTransactionStatus(txHash.toString());
+  if (status.status !== "success") {
+    throw new Error('Usage fee transaction failed. Ensure sufficient REWARD tokens are available.');
+  }
+  return txHash.toString();
 };
 
-// Middleware to handle usage fee
+// Middleware: Handle usage fee
 const handleUsageFee = async (req, res, next) => {
-    try {
-        const pemContent = getPemContent(req);
-        const walletAddress = deriveWalletAddressFromPem(pemContent);
+  try {
+    const pemContent = getPemContent(req);
+    const walletAddress = UserSigner.fromPem(pemContent).getAddress().toString();
 
-        // Check if the wallet is whitelisted
-        if (isWhitelisted(walletAddress)) {
-            console.log(`Wallet ${walletAddress} is whitelisted. Skipping usage fee.`);
-            next(); // Skip the usage fee and proceed
-            return;
-        }
-
-        const txHash = await sendUsageFee(pemContent);
-        req.usageFeeHash = txHash; // Attach transaction hash to the request
-        next();
-    } catch (error) {
-        console.error('Error processing UsageFee:', error.message);
-        res.status(400).json({ error: error.message });
+    if (isWhitelisted(walletAddress)) {
+      console.log(`Wallet ${walletAddress} is whitelisted. Skipping usage fee.`);
+      return next();
     }
+
+    const txHash = await sendUsageFee(pemContent);
+    req.usageFeeHash = txHash;
+    next();
+  } catch (error) {
+    console.error('Error processing usage fee:', error.message);
+    res.status(400).json({ error: error.message });
+  }
 };
+
+// Apply usage fee middleware to all routes
+app.use(handleUsageFee);
 
 // Helper function to fetch ESDT token details (including decimals)
 const fetchTokenDecimals = async (token) => {
