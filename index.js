@@ -33,6 +33,7 @@ const USAGE_FEE = 100; // Fee in REWARD tokens
 const REWARD_TOKEN = "REWARD-cf6eac"; // Token identifier
 const TREASURY_WALLET = "erd158k2c3aserjmwnyxzpln24xukl2fsvlk9x46xae4dxl5xds79g6sdz37qn"; // Treasury wallet
 const provider = new ProxyNetworkProvider("https://gateway.multiversx.com", { clientName: "javascript-api" });
+const LP_CONTRACT = "erd1qqqqqqqqqqqqqpgq5e30gcakgtam8dpzj9xl2yd45fzdrw6c2jpsxe7ldq";
 
 const whitelistFilePath = path.join(__dirname, 'whitelist.json');
 
