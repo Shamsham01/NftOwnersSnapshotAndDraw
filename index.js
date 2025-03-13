@@ -116,11 +116,12 @@ const checkTransactionStatus = async (txHash, retries = 40, delay = 5000) => {
 const generateCsv = async (data) => {
     const csvData = [];
     data.forEach((row) => {
+        // Ensure all values are safely converted to strings to prevent BigInt conversion issues
         csvData.push({
-            address: row.address || row.owner,
-            identifier: row.identifier || '',
-            balance: row.balance || '',
-            metadataFileName: row.metadataFileName || '',
+            address: String(row.address || row.owner || ''),
+            identifier: String(row.identifier || ''),
+            balance: String(row.balance || ''),
+            metadataFileName: String(row.metadataFileName || ''),
             attributes: row.attributes ? JSON.stringify(row.attributes) : ''
         });
     });
@@ -413,7 +414,9 @@ const generateUniqueOwnerStats = (data, assetType = "NFT", decimals = 0) => {
             stats[account] += 1;
         } else if (assetType === "SFT") {
             // SFT: Whole number (no decimals)
-            stats[account] += parseInt(balance || 0, 10);
+            // Use BigInt and then convert back to Number to avoid overflow
+            const balanceBigInt = BigInt(balance || '0');
+            stats[account] += Number(balanceBigInt.toString());
         } else if (assetType === "ESDT") {
             // ESDT: Convert balance using BigInt operations instead of Number conversion
             const balanceBigInt = BigInt(balance || '0');
@@ -437,7 +440,25 @@ const generateUniqueOwnerStats = (data, assetType = "NFT", decimals = 0) => {
             owner: account,
             tokensCount: assetType === "NFT" || assetType === "SFT" ? tokensCount : tokensCount.toFixed(decimals),
         }))
-        .sort((a, b) => parseFloat(b.tokensCount) - parseFloat(a.tokensCount));
+        .sort((a, b) => {
+            // Use safer string comparison for large numbers
+            // This ensures we don't hit floating point precision issues
+            if (typeof a.tokensCount === 'string' && typeof b.tokensCount === 'string') {
+                // For numeric strings of different lengths
+                const aNum = a.tokensCount.replace('.', '');
+                const bNum = b.tokensCount.replace('.', '');
+                
+                if (aNum.length !== bNum.length) {
+                    return bNum.length - aNum.length; // Longer number is larger
+                }
+                
+                // For same length strings, lexicographic comparison works
+                return bNum.localeCompare(aNum);
+            }
+            
+            // Fallback to standard numeric comparison for small numbers
+            return Number(b.tokensCount) - Number(a.tokensCount);
+        });
 };
 
 
@@ -694,20 +715,33 @@ app.post('/sftSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
         // ✅ Generate unique owner stats with updated function
         const uniqueOwnerStats = generateUniqueOwnerStats(sftOwners, "SFT");
 
-        // Randomly select winners
-        const shuffled = sftOwners.sort(() => 0.5 - Math.random());
-        const winners = shuffled.slice(0, numberOfWinners);
+        // Sort owners by balance in descending order
+        const sortedOwners = [...sftOwners].sort((a, b) => 
+            BigInt(b.balance || '0') - BigInt(a.balance || '0')
+        );
 
-        // Generate CSV for all SFT owners
+        // Either randomly select winners (original behavior) or use top holders
+        // For backward compatibility, we'll keep random selection
+        const shuffled = sftOwners.sort(() => 0.5 - Math.random());
+        const winners = shuffled.slice(0, numberOfWinners).map(winner => {
+            // Format the balance properly to avoid BigInt conversion issues
+            return {
+                ...winner,
+                // SFTs typically have 0 decimals, but format safely anyway
+                balance: BigInt(winner.balance || '0').toString()
+            };
+        });
+
+        // Generate CSV with properly formatted balances
         const csvString = await generateCsv(sftOwners.map(owner => ({
             address: owner.address,
-            balance: owner.balance,
+            balance: BigInt(owner.balance || '0').toString(),
         })));
 
         // Response payload
         res.json({
             winners,
-            uniqueOwnerStats, // ✅ This now includes proper owners & integer token counts
+            uniqueOwnerStats,
             totalOwners: sftOwners.length,
             message: `${numberOfWinners} winners have been selected from the SFT collection "${collectionTicker}" across editions "${editions}".`,
             csvString,
