@@ -1068,7 +1068,7 @@ const fetchStakedEsdts = async (token, stakingContractAddress) => {
       .filter(tx => tx.status === "success")
       .sort((a, b) => {
         // Safely compare timestamps as strings or convert to BigInt if necessary
-        const tsA = BigInt(String(tx.timestamp || '0'));
+        const tsA = BigInt(String(a.timestamp || '0'));
         const tsB = BigInt(String(b.timestamp || '0'));
         return tsA < tsB ? -1 : tsA > tsB ? 1 : 0;
       });
