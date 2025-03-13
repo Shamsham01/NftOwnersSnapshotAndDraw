@@ -1022,6 +1022,186 @@ app.post('/stakedNftsSnapshotDraw', checkToken, handleUsageFee, async (req, res)
   }
 });
 
+// Helper function to fetch staked ESDT tokens similar to fetchStakedNfts but for ESDT tokens
+const fetchStakedEsdts = async (token, stakingContractAddress) => {
+  if (!stakingContractAddress) {
+    throw new Error("Staking smart contract address is required");
+  }
+
+  try {
+    console.log(`Fetching staked ESDT tokens for ${token} from contract ${stakingContractAddress}`);
+    
+    // Fetch all token transfers involving the staking contract
+    const baseUrl = `https://api.multiversx.com/accounts/${stakingContractAddress}/transfers?size=1000&token=${token}`;
+    console.log(`Fetching transactions from ${baseUrl}`);
+    const allTransactions = await fetchAllTransactions(baseUrl);
+    
+    const successfulTxs = allTransactions
+      .filter(tx => tx.status === "success")
+      .sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
+    
+    console.log(`Found ${successfulTxs.length} successful transactions for token ${token}`);
+
+    // Step 1: Collect all staking events
+    const stakingEvents = [];
+    const validStakingFunctions = ["stake", "userStake"]; // The two common staking functions
+    
+    successfulTxs.forEach(tx => {
+      // Check if this is a staking transaction (stake or userStake function)
+      if (validStakingFunctions.includes(tx.function)) {
+        // For ESDT tokens, we need to look at the action.arguments.transfers
+        const transfers = tx.action?.arguments?.transfers || [];
+        transfers.forEach(transfer => {
+          if (transfer.identifier === token) {
+            stakingEvents.push({
+              txHash: tx.hash || tx.nonce,
+              timestamp: tx.timestamp,
+              function: tx.function,
+              sender: tx.sender,
+              amount: transfer.value || "0",
+              tokenIdentifier: transfer.identifier
+            });
+          }
+        });
+      }
+    });
+    
+    console.log(`Found ${stakingEvents.length} staking events for token ${token}`);
+    
+    // Step 2: Fetch current token balance in the smart contract to validate
+    const tokenHoldings = await fetchContractTokenBalance(stakingContractAddress, token);
+    console.log(`Current token balance in contract: ${tokenHoldings}`);
+    
+    // Step 3: Calculate how much is staked by each address
+    // Since we can't know precisely which tokens were unstaked, we'll use the current total
+    // and distribute it proportionally based on staking events
+    const stakedByAddress = {};
+    let totalStakedFromEvents = BigInt(0);
+    
+    stakingEvents.forEach(event => {
+      const amount = BigInt(event.amount);
+      if (!stakedByAddress[event.sender]) {
+        stakedByAddress[event.sender] = BigInt(0);
+      }
+      stakedByAddress[event.sender] += amount;
+      totalStakedFromEvents += amount;
+    });
+    
+    // If there are no staking events or total staked amount is 0, return empty result
+    if (totalStakedFromEvents === BigInt(0) || BigInt(tokenHoldings) === BigInt(0)) {
+      return [];
+    }
+    
+    // Step 4: Adjust stakings proportionally to match the current balance in SC
+    const currentContractBalance = BigInt(tokenHoldings);
+    const stakedData = [];
+    
+    for (const [address, stakedAmount] of Object.entries(stakedByAddress)) {
+      // Calculate the proportional share of the current balance
+      // proportionalAmount = (address_staked / total_staked) * current_balance
+      let proportionalAmount;
+      if (totalStakedFromEvents === BigInt(0)) {
+        proportionalAmount = BigInt(0);
+      } else {
+        proportionalAmount = (stakedAmount * currentContractBalance) / totalStakedFromEvents;
+      }
+      
+      if (proportionalAmount > BigInt(0)) {
+        stakedData.push({
+          address: address,
+          balance: proportionalAmount.toString()
+        });
+      }
+    }
+    
+    console.log(`Found ${stakedData.length} addresses with staked ${token} tokens`);
+    return stakedData;
+    
+  } catch (error) {
+    console.error("Error fetching staked ESDT tokens data:", error.message);
+    throw error;
+  }
+};
+
+// Helper to fetch a contract's token balance
+const fetchContractTokenBalance = async (contractAddress, token) => {
+  try {
+    const response = await fetch(`https://api.multiversx.com/accounts/${contractAddress}/tokens/${token}`);
+    
+    // If token not found in the account, return 0
+    if (response.status === 404) {
+      return "0";
+    }
+    
+    if (!response.ok) {
+      throw new Error(`Error fetching token balance: ${response.status} ${response.statusText}`);
+    }
+    
+    const data = await response.json();
+    return data.balance || "0";
+  } catch (error) {
+    console.error(`Error fetching ${token} balance for ${contractAddress}:`, error.message);
+    return "0"; // Return 0 on error
+  }
+};
+
+// Route for staked ESDT tokens snapshot draw
+app.post('/stakedEsdtsSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
+  try {
+    const { token, stakingContractAddress, numberOfWinners } = req.body;
+    
+    if (!token || !stakingContractAddress || !numberOfWinners) {
+      return res.status(400).json({ 
+        error: 'Missing required parameters: token, stakingContractAddress, numberOfWinners' 
+      });
+    }
+    
+    // Step 1: Fetch Token Decimals
+    const decimals = await fetchTokenDecimals(token);
+    console.log(`Token ${token} has ${decimals} decimals`);
+    
+    // Step 2: Fetch staked data
+    const stakedData = await fetchStakedEsdts(token, stakingContractAddress);
+    
+    if (stakedData.length === 0) {
+      return res.status(404).json({ error: 'No staked tokens found for this token and contract' });
+    }
+    
+    const totalStakedCount = stakedData.length;
+    console.log(`Found ${totalStakedCount} stakers`);
+
+    // Step 3: Generate unique owner statistics with proper decimal conversion
+    const uniqueOwnerStats = generateUniqueOwnerStats(stakedData, "ESDT", decimals);
+
+    // Step 4: Randomly shuffle the stakers and pick winners
+    const shuffled = stakedData.sort(() => 0.5 - Math.random());
+    // Apply proper decimal formatting to winners
+    const winners = shuffled.slice(0, numberOfWinners).map(winner => ({
+      ...winner,
+      balance: (Number(winner.balance || 0) / 10 ** decimals).toFixed(decimals)
+    }));
+    
+    // Step 5: Generate CSV with properly formatted balances 
+    const csvString = await generateCsv(stakedData.map(staker => ({
+      address: staker.address,
+      balance: (Number(staker.balance || 0) / 10 ** decimals).toFixed(decimals)
+    })));
+
+    res.json({
+      token,
+      stakingContractAddress,
+      totalStakers: stakedData.length,
+      uniqueOwnerStats,
+      winners,
+      csvString,
+      message: `${numberOfWinners} winners have been selected from stakers of ${token}.`,
+      usageFeeHash: req.usageFeeHash,
+    });
+  } catch (error) {
+    console.error('Error during stakedEsdtsSnapshotDraw:', error);
+    res.status(500).json({ error: `Failed to fetch staked ESDT tokens: ${error.message}` });
+  }
+});
 
 // ------------------ Start Server ------------------
 app.listen(PORT, () => {
