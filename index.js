@@ -280,7 +280,11 @@ const getRewardPrice = async () => {
     // Fetch EGLD price from CoinGecko
     const coingeckoResponse = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=elrond-erd-2&vs_currencies=usd');
     const coingeckoData = await coingeckoResponse.json();
-    const eglPriceUsd = new BigNumber(coingeckoData['elrond-erd-2'].usd);
+    const eglPriceUsd = coingeckoData['elrond-erd-2']?.usd;
+
+    if (!eglPriceUsd) {
+      throw new Error('EGLD price in USD is not available');
+    }
 
     // Get LP pool data
     const lpResponse = await fetch(`https://api.multiversx.com/accounts/${LP_CONTRACT}/tokens`);
