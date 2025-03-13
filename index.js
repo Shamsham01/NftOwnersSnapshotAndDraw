@@ -31,6 +31,7 @@ const PORT = process.env.PORT || 10000;
 const SECURE_TOKEN = process.env.SECURE_TOKEN;  // Secure Token for authorization
 const USAGE_FEE = 100; // Fee in REWARD tokens
 const REWARD_TOKEN = "REWARD-cf6eac"; // Token identifier
+const WEGLD_TOKEN = "WEGLD-bd4d79"; // Token identifier for WEGLD
 const TREASURY_WALLET = "erd158k2c3aserjmwnyxzpln24xukl2fsvlk9x46xae4dxl5xds79g6sdz37qn"; // Treasury wallet
 const provider = new ProxyNetworkProvider("https://gateway.multiversx.com", { clientName: "javascript-api" });
 const LP_CONTRACT = "erd1qqqqqqqqqqqqqpgq5e30gcakgtam8dpzj9xl2yd45fzdrw6c2jpsxe7ldq";
@@ -245,6 +246,7 @@ const fetchTokenDetails = async (token) => {
 const getPemContent = (req) => {
     const pemContent = req.body.walletPem;
     if (!pemContent || typeof pemContent !== 'string' || !pemContent.includes('-----BEGIN PRIVATE KEY-----')) {
+        console.error('Invalid PEM content:', pemContent);
         throw new Error('Invalid PEM content');
     }
     return pemContent;
