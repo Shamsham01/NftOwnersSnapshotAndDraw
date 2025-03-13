@@ -415,8 +415,20 @@ const generateUniqueOwnerStats = (data, assetType = "NFT", decimals = 0) => {
             // SFT: Whole number (no decimals)
             stats[account] += parseInt(balance || 0, 10);
         } else if (assetType === "ESDT") {
-            // ESDT: Convert balance using dynamically fetched decimals
-            stats[account] += parseFloat((Number(balance || 0) / 10 ** decimals).toFixed(decimals));
+            // ESDT: Convert balance using BigInt operations instead of Number conversion
+            const balanceBigInt = BigInt(balance || '0');
+            const divisor = BigInt(10) ** BigInt(decimals);
+            const wholePartBigInt = balanceBigInt / divisor;
+            const decimalPartBigInt = balanceBigInt % divisor;
+            
+            // Convert to string representation with decimal point
+            const wholePartStr = wholePartBigInt.toString();
+            const decimalPartStr = decimalPartBigInt.toString().padStart(decimals, '0');
+            
+            // For stats, we still need a numeric value for sorting and summing
+            // Convert carefully and handle potential precision issues
+            const numericValue = parseFloat(`${wholePartStr}.${decimalPartStr}`);
+            stats[account] += numericValue;
         }
     });
 
@@ -460,12 +472,28 @@ app.post('/nftSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
             return res.status(404).json({ error: 'No NFTs found matching the criteria.' });
         }
 
+        // Fetch token decimals if needed
+        const decimals = 0; // NFTs typically don't have decimals, but add if needed
+
         // Select random winners
         const shuffled = filteredAddresses.sort(() => 0.5 - Math.random());
-        const winners = shuffled.slice(0, numberOfWinners).map(winner => ({
-            ...winner,
-            balance: (Number(winner.balance || 0) / 10 ** decimals).toFixed(decimals),
-        }));
+        const winners = shuffled.slice(0, numberOfWinners).map(winner => {
+            // NFTs typically don't have balances, but if they do, format them properly
+            let formattedBalance = winner.balance || '1';
+            if (winner.balance && decimals > 0) {
+                // Use proper BigInt formatting if there's a balance with decimals
+                const balanceBigInt = BigInt(winner.balance || '1');
+                const divisor = BigInt(10) ** BigInt(decimals);
+                const wholePart = (balanceBigInt / divisor).toString();
+                const decimalPart = (balanceBigInt % divisor).toString().padStart(decimals, '0');
+                formattedBalance = `${wholePart}.${decimalPart}`;
+            }
+            
+            return {
+                ...winner,
+                balance: formattedBalance
+            };
+        });
 
         // Return only winners without CSV or unique owner stats
         res.json({
@@ -1038,7 +1066,12 @@ const fetchStakedEsdts = async (token, stakingContractAddress) => {
     
     const successfulTxs = allTransactions
       .filter(tx => tx.status === "success")
-      .sort((a, b) => Number(a.timestamp) - Number(b.timestamp)); // Sort chronologically
+      .sort((a, b) => {
+        // Safely compare timestamps as strings or convert to BigInt if necessary
+        const tsA = BigInt(String(tx.timestamp || '0'));
+        const tsB = BigInt(String(b.timestamp || '0'));
+        return tsA < tsB ? -1 : tsA > tsB ? 1 : 0;
+      });
     
     console.log(`Found ${successfulTxs.length} successful transactions for token ${token}`);
 
@@ -1071,7 +1104,7 @@ const fetchStakedEsdts = async (token, stakingContractAddress) => {
         userBalances[user] += amount;
         totalStaked += amount;
         
-        console.log(`[STAKING] User ${user} staked ${amount.toString()} tokens at ${new Date(tx.timestamp * 1000).toISOString()}`);
+        console.log(`[STAKING] User ${user} staked ${amount.toString()} tokens at ${new Date(Number(tx.timestamp) * 1000).toISOString()}`);
       }
       
       // CASE 2: Unstaking event (SC → User, function is ESDTTransfer)
@@ -1085,7 +1118,7 @@ const fetchStakedEsdts = async (token, stakingContractAddress) => {
         if (userBalances[user] >= amount) {
           userBalances[user] -= amount;
           totalStaked -= amount;
-          console.log(`[UNSTAKING] User ${user} unstaked ${amount.toString()} tokens at ${new Date(tx.timestamp * 1000).toISOString()}`);
+          console.log(`[UNSTAKING] User ${user} unstaked ${amount.toString()} tokens at ${new Date(Number(tx.timestamp) * 1000).toISOString()}`);
         } else {
           console.warn(`Warning: Unstaking event would result in negative balance for user ${user}. Setting to 0.`);
           totalStaked -= userBalances[user];
