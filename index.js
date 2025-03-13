@@ -274,49 +274,15 @@ const isWhitelisted = (walletAddress) => {
     return whitelist.some(entry => entry.walletAddress === walletAddress);
 };
 
-// Helper: Fetch REWARD token price from LP pool
+// Helper: Fetch REWARD token price from MultiversX API
 const getRewardPrice = async () => {
   try {
-    // Fetch EGLD price from CoinGecko
-    const coingeckoResponse = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=elrond-erd-2&vs_currencies=usd');
-    const coingeckoData = await coingeckoResponse.json();
-    console.log('CoinGecko response:', coingeckoData); // Log the full response
-    const eglPriceUsd = new BigNumber(coingeckoData['elrond-erd-2']?.usd);
-
-    if (!eglPriceUsd.isFinite() || eglPriceUsd.isZero()) {
-      throw new Error('EGLD price in USD is not available');
-    }
-
-    // Get LP pool data
-    const lpResponse = await fetch(`https://api.multiversx.com/accounts/${LP_CONTRACT}/tokens`);
-    const lpData = await lpResponse.json();
-
-    // Find REWARD and WEGLD reserves
-    const rewardReserve = lpData.find(token => token.identifier === REWARD_TOKEN)?.balance || '0';
-    const wegldReserve = lpData.find(token => token.identifier === WEGLD_TOKEN)?.balance || '0';
-
-    // Get token decimals
-    const rewardDecimals = await getTokenDecimals(REWARD_TOKEN);
-    const wegldDecimals = await getTokenDecimals(WEGLD_TOKEN);
-
-    // Calculate price using BigNumber for precise decimal arithmetic
-    const rewardReserveBN = new BigNumber(rewardReserve);
-    const wegldReserveBN = new BigNumber(wegldReserve);
-    
-    if (rewardReserveBN.isZero()) {
-      throw new Error('REWARD reserve is zero');
-    }
-
-    // Calculate REWARD/WEGLD ratio
-    const rewardInWegld = wegldReserveBN
-      .multipliedBy(new BigNumber(10).pow(rewardDecimals))
-      .dividedBy(rewardReserveBN.multipliedBy(new BigNumber(10).pow(wegldDecimals)));
-
-    // Calculate final USD price using EGLD price from CoinGecko
-    const rewardPriceUsd = rewardInWegld.multipliedBy(eglPriceUsd);
+    const response = await fetch('https://api.elrond.com/tokens?type=FungibleESDT&search=REWARD-cf6eac');
+    const data = await response.json();
+    const rewardPriceUsd = new BigNumber(data[0].price);
 
     if (!rewardPriceUsd.isFinite() || rewardPriceUsd.isZero()) {
-      throw new Error('Invalid REWARD price calculation');
+      throw new Error('Invalid REWARD price fetched from MultiversX API');
     }
 
     return rewardPriceUsd.toNumber();
