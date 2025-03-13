@@ -32,6 +32,7 @@ const SECURE_TOKEN = process.env.SECURE_TOKEN;  // Secure Token for authorizatio
 const TREASURY_WALLET = "erd158k2c3aserjmwnyxzpln24xukl2fsvlk9x46xae4dxl5xds79g6sdz37qn"; // Treasury wallet
 const provider = new ProxyNetworkProvider("https://gateway.multiversx.com", { clientName: "javascript-api" });
 const FIXED_USD_FEE = 0.03; // Fixed fee in USD
+const REWARD_TOKEN = "REWARD-cf6eac";
 
 const whitelistFilePath = path.join(__dirname, 'whitelist.json');
 
