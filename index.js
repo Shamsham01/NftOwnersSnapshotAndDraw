@@ -116,12 +116,11 @@ const checkTransactionStatus = async (txHash, retries = 40, delay = 5000) => {
 const generateCsv = async (data) => {
     const csvData = [];
     data.forEach((row) => {
-        // Ensure all values are safely converted to strings to prevent BigInt conversion issues
         csvData.push({
-            address: String(row.address || row.owner || ''),
-            identifier: String(row.identifier || ''),
-            balance: String(row.balance || ''),
-            metadataFileName: String(row.metadataFileName || ''),
+            address: row.address || row.owner,
+            identifier: row.identifier || '',
+            balance: row.balance || '',
+            metadataFileName: row.metadataFileName || '',
             attributes: row.attributes ? JSON.stringify(row.attributes) : ''
         });
     });
@@ -414,36 +413,10 @@ const generateUniqueOwnerStats = (data, assetType = "NFT", decimals = 0) => {
             stats[account] += 1;
         } else if (assetType === "SFT") {
             // SFT: Whole number (no decimals)
-            // Use BigInt and then convert back to Number to avoid overflow
-            const balanceBigInt = BigInt(balance || '0');
-            stats[account] += Number(balanceBigInt.toString());
+            stats[account] += parseInt(balance || 0, 10);
         } else if (assetType === "ESDT") {
-            // ESDT: Handle both raw balance strings and formatted decimal strings
-            let numericValue;
-            if (balance && balance.includes('.')) {
-                // If balance is already a formatted string with a decimal point
-                numericValue = parseFloat(balance);
-            } else {
-                // If balance is a raw blockchain value, convert using BigInt
-                try {
-                    const balanceBigInt = BigInt(balance || '0');
-                    const divisor = BigInt(10) ** BigInt(decimals);
-                    const wholePartBigInt = balanceBigInt / divisor;
-                    const decimalPartBigInt = balanceBigInt % divisor;
-                    
-                    // Convert to string representation with decimal point
-                    const wholePartStr = wholePartBigInt.toString();
-                    const decimalPartStr = decimalPartBigInt.toString().padStart(decimals, '0');
-                    
-                    // Convert to float for stats calculation
-                    numericValue = parseFloat(`${wholePartStr}.${decimalPartStr}`);
-                } catch (error) {
-                    console.warn(`Error parsing balance: ${balance}. Using 0 instead.`, error);
-                    numericValue = 0;
-                }
-            }
-            
-            stats[account] += numericValue;
+            // ESDT: Convert balance using dynamically fetched decimals
+            stats[account] += parseFloat((Number(balance || 0) / 10 ** decimals).toFixed(decimals));
         }
     });
 
@@ -452,25 +425,7 @@ const generateUniqueOwnerStats = (data, assetType = "NFT", decimals = 0) => {
             owner: account,
             tokensCount: assetType === "NFT" || assetType === "SFT" ? tokensCount : tokensCount.toFixed(decimals),
         }))
-        .sort((a, b) => {
-            // Use safer string comparison for large numbers
-            // This ensures we don't hit floating point precision issues
-            if (typeof a.tokensCount === 'string' && typeof b.tokensCount === 'string') {
-                // For numeric strings of different lengths
-                const aNum = a.tokensCount.replace('.', '');
-                const bNum = b.tokensCount.replace('.', '');
-                
-                if (aNum.length !== bNum.length) {
-                    return bNum.length - aNum.length; // Longer number is larger
-                }
-                
-                // For same length strings, lexicographic comparison works
-                return bNum.localeCompare(aNum);
-            }
-            
-            // Fallback to standard numeric comparison for small numbers
-            return Number(b.tokensCount) - Number(a.tokensCount);
-        });
+        .sort((a, b) => parseFloat(b.tokensCount) - parseFloat(a.tokensCount));
 };
 
 
@@ -505,28 +460,12 @@ app.post('/nftSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
             return res.status(404).json({ error: 'No NFTs found matching the criteria.' });
         }
 
-        // Fetch token decimals if needed
-        const decimals = 0; // NFTs typically don't have decimals, but add if needed
-
         // Select random winners
         const shuffled = filteredAddresses.sort(() => 0.5 - Math.random());
-        const winners = shuffled.slice(0, numberOfWinners).map(winner => {
-            // NFTs typically don't have balances, but if they do, format them properly
-            let formattedBalance = winner.balance || '1';
-            if (winner.balance && decimals > 0) {
-                // Use proper BigInt formatting if there's a balance with decimals
-                const balanceBigInt = BigInt(winner.balance || '1');
-                const divisor = BigInt(10) ** BigInt(decimals);
-                const wholePart = (balanceBigInt / divisor).toString();
-                const decimalPart = (balanceBigInt % divisor).toString().padStart(decimals, '0');
-                formattedBalance = `${wholePart}.${decimalPart}`;
-            }
-            
-            return {
-                ...winner,
-                balance: formattedBalance
-            };
-        });
+        const winners = shuffled.slice(0, numberOfWinners).map(winner => ({
+            ...winner,
+            balance: (Number(winner.balance || 0) / 10 ** decimals).toFixed(decimals),
+        }));
 
         // Return only winners without CSV or unique owner stats
         res.json({
@@ -724,37 +663,23 @@ app.post('/sftSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
             return res.status(404).json({ error: 'No SFT owners found for the specified collection and editions' });
         }
 
-        // First, format the data to prevent BigInt conversion issues
-        const formattedData = sftOwners.map(owner => ({
-            address: owner.address,
-            balance: String(BigInt(owner.balance || '0')), // Convert to string to avoid BigInt issues
-            originalBalance: owner.balance // Keep original for reference
-        }));
+        // ✅ Generate unique owner stats with updated function
+        const uniqueOwnerStats = generateUniqueOwnerStats(sftOwners, "SFT");
 
-        // Generate unique owner stats with the formatted data to prevent BigInt issues
-        const dataForStats = formattedData.map(item => ({
-            address: item.address,
-            balance: item.balance // Use the pre-formatted balance string
-        }));
-        const uniqueOwnerStats = generateUniqueOwnerStats(dataForStats, "SFT");
-
-        // Sort owners by balance in descending order using the original BigInt values
-        const sortedOwners = [...formattedData].sort((a, b) => 
-            BigInt(b.originalBalance || '0') - BigInt(a.originalBalance || '0')
-        );
-
-        // Either randomly select winners (original behavior) or use top holders
-        // For backward compatibility, we'll keep random selection but use formatted data
-        const shuffled = [...formattedData].sort(() => 0.5 - Math.random()); // Use a copy for random sort
+        // Randomly select winners
+        const shuffled = sftOwners.sort(() => 0.5 - Math.random());
         const winners = shuffled.slice(0, numberOfWinners);
 
-        // Generate CSV with properly formatted balances
-        const csvString = await generateCsv(formattedData);
+        // Generate CSV for all SFT owners
+        const csvString = await generateCsv(sftOwners.map(owner => ({
+            address: owner.address,
+            balance: owner.balance,
+        })));
 
         // Response payload
         res.json({
             winners,
-            uniqueOwnerStats,
+            uniqueOwnerStats, // ✅ This now includes proper owners & integer token counts
             totalOwners: sftOwners.length,
             message: `${numberOfWinners} winners have been selected from the SFT collection "${collectionTicker}" across editions "${editions}".`,
             csvString,
@@ -860,43 +785,21 @@ app.post('/esdtSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
 
         console.log(`Fetched ${esdtOwners.length} ESDT owners`);
 
-        // Step 3: Format the data COMPLETELY before any sorting or operations
-        // This prevents ALL BigInt conversion issues during subsequent operations
-        const formattedData = esdtOwners.map(owner => {
-            const balanceBigInt = BigInt(owner.balance || '0');
-            const divisor = BigInt(10) ** BigInt(decimals);
-            const wholePart = (balanceBigInt / divisor).toString();
-            const decimalPart = (balanceBigInt % divisor).toString().padStart(decimals, '0');
-            const formattedBalance = `${wholePart}.${decimalPart}`;
-            
-            return {
-                address: owner.address,
-                balance: formattedBalance,
-                originalBalance: owner.balance // Keep original for reference
-            };
-        });
+        // Step 3: Generate Unique Owner Stats
+        const uniqueOwnerStats = generateUniqueOwnerStats(esdtOwners, "ESDT", decimals);
 
-        // Step 4: Generate Unique Owner Stats with the formatted data
-        // Create a copy with pre-formatted balances to prevent BigInt conversion issues
-        const dataForStats = formattedData.map(item => ({
-            address: item.address,
-            balance: item.balance // Use the pre-formatted balance string
+        // Step 4: Select Random Winners
+        const shuffled = esdtOwners.sort(() => 0.5 - Math.random());
+        const winners = shuffled.slice(0, numberOfWinners).map(winner => ({
+            ...winner,
+            balance: (Number(winner.balance || 0) / 10 ** decimals).toFixed(decimals)
         }));
-        const uniqueOwnerStats = generateUniqueOwnerStats(dataForStats, "ESDT", decimals);
 
-        // Step 5: Sort owners by balance in descending order using the original BigInt values
-        const sortedOwners = [...formattedData].sort((a, b) => 
-            BigInt(b.originalBalance || '0') - BigInt(a.originalBalance || '0')
-        );
-
-        // Step 6: Create a COPY for random selection (with all values as strings)
-        // Now we can safely shuffle without BigInt conversion issues
-        const shufflableCopy = [...formattedData];
-        const shuffled = shufflableCopy.sort(() => 0.5 - Math.random());
-        const winners = shuffled.slice(0, numberOfWinners);
-
-        // Step 7: Generate CSV with the already formatted data
-        const csvString = await generateCsv(formattedData);
+        // Step 5: Generate CSV Output
+        const csvString = await generateCsv(esdtOwners.map(owner => ({
+            address: owner.address,
+            balance: (Number(owner.balance || 0) / 10 ** decimals).toFixed(decimals),
+        })));
 
         res.json({
             token,
@@ -1034,12 +937,7 @@ const fetchStakedNfts = async (collectionTicker, contractLabel) => {
     const allTransactions = await fetchAllTransactions(baseUrl);
     const successfulTxs = allTransactions
       .filter(tx => tx.status === "success")
-      .sort((a, b) => {
-        // Safely compare timestamps as strings or convert to BigInt if necessary
-        const tsA = BigInt(String(a.timestamp || '0'));
-        const tsB = BigInt(String(b.timestamp || '0'));
-        return tsA < tsB ? -1 : tsA > tsB ? 1 : 0;
-      });
+      .sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
 
     // Collect raw staking events (with duplicates) from successful transactions.
     const rawStakedEvents = [];
@@ -1102,20 +1000,13 @@ app.post('/stakedNftsSnapshotDraw', checkToken, handleUsageFee, async (req, res)
     }
     const totalStakedCount = stakedData.length;
 
-    // Format data to prevent any potential BigInt issues
-    const formattedData = stakedData.map(item => ({
-      owner: item.owner,
-      identifier: item.identifier,
-      balance: "1" // NFTs typically have a balance of 1
-    }));
-
-    // Generate unique owner statistics using formatted data
-    const uniqueOwnerStats = generateUniqueOwnerStats(formattedData, "NFT");
+    // Generate unique owner statistics (each NFT counts as 1)
+    const uniqueOwnerStats = generateUniqueOwnerStats(stakedData, "NFT");
 
     // Randomly shuffle the staked NFTs and pick winners
-    const shuffled = formattedData.sort(() => 0.5 - Math.random());
+    const shuffled = stakedData.sort(() => 0.5 - Math.random());
     const winners = shuffled.slice(0, numberOfWinners);
-    const csvString = await generateCsv(formattedData);
+    const csvString = await generateCsv(stakedData);
 
     res.json({
       winners,
@@ -1147,12 +1038,7 @@ const fetchStakedEsdts = async (token, stakingContractAddress) => {
     
     const successfulTxs = allTransactions
       .filter(tx => tx.status === "success")
-      .sort((a, b) => {
-        // Safely compare timestamps as strings or convert to BigInt if necessary
-        const tsA = BigInt(String(a.timestamp || '0'));
-        const tsB = BigInt(String(b.timestamp || '0'));
-        return tsA < tsB ? -1 : tsA > tsB ? 1 : 0;
-      });
+      .sort((a, b) => Number(a.timestamp) - Number(b.timestamp)); // Sort chronologically
     
     console.log(`Found ${successfulTxs.length} successful transactions for token ${token}`);
 
@@ -1185,7 +1071,7 @@ const fetchStakedEsdts = async (token, stakingContractAddress) => {
         userBalances[user] += amount;
         totalStaked += amount;
         
-        console.log(`[STAKING] User ${user} staked ${amount.toString()} tokens at ${new Date(Number(tx.timestamp) * 1000).toISOString()}`);
+        console.log(`[STAKING] User ${user} staked ${amount.toString()} tokens at ${new Date(tx.timestamp * 1000).toISOString()}`);
       }
       
       // CASE 2: Unstaking event (SC → User, function is ESDTTransfer)
@@ -1199,7 +1085,7 @@ const fetchStakedEsdts = async (token, stakingContractAddress) => {
         if (userBalances[user] >= amount) {
           userBalances[user] -= amount;
           totalStaked -= amount;
-          console.log(`[UNSTAKING] User ${user} unstaked ${amount.toString()} tokens at ${new Date(Number(tx.timestamp) * 1000).toISOString()}`);
+          console.log(`[UNSTAKING] User ${user} unstaked ${amount.toString()} tokens at ${new Date(tx.timestamp * 1000).toISOString()}`);
         } else {
           console.warn(`Warning: Unstaking event would result in negative balance for user ${user}. Setting to 0.`);
           totalStaked -= userBalances[user];
@@ -1289,38 +1175,22 @@ app.post('/stakedEsdtsSnapshotDraw', checkToken, handleUsageFee, async (req, res
     const totalStakedCount = stakedData.length;
     console.log(`Found ${totalStakedCount} stakers`);
 
-    // Step 3: Format ALL data to prevent ANY BigInt conversion issues
-    const formattedData = stakedData.map(staker => {
-      const balanceBigInt = BigInt(staker.balance || '0');
-      const divisor = BigInt(10) ** BigInt(decimals);
-      const wholePart = (balanceBigInt / divisor).toString();
-      const decimalPart = (balanceBigInt % divisor).toString().padStart(decimals, '0');
-      
-      return {
-        address: staker.address,
-        balance: `${wholePart}.${decimalPart}`,
-        originalBalance: staker.balance // Keep original for sorting
-      };
-    });
+    // Step 3: Generate unique owner statistics with proper decimal conversion
+    const uniqueOwnerStats = generateUniqueOwnerStats(stakedData, "ESDT", decimals);
 
-    // Step 4: Generate unique owner statistics using FORMATTED data to prevent BigInt issues
-    // Create a copy of the data with balances as strings to prevent BigInt conversion issues
-    const dataForStats = formattedData.map(item => ({
-      address: item.address,
-      balance: item.balance // Use the pre-formatted balance string
+    // Step 4: Randomly shuffle the stakers and pick winners
+    const shuffled = stakedData.sort(() => 0.5 - Math.random());
+    // Apply proper decimal formatting to winners
+    const winners = shuffled.slice(0, numberOfWinners).map(winner => ({
+      ...winner,
+      balance: (Number(winner.balance || 0) / 10 ** decimals).toFixed(decimals)
     }));
-    const uniqueOwnerStats = generateUniqueOwnerStats(dataForStats, "ESDT", decimals);
-
-    // Step 5: Sort stakers by balance in descending order using the original BigInt values
-    const sortedStakers = [...formattedData].sort((a, b) => 
-      BigInt(b.originalBalance || '0') - BigInt(a.originalBalance || '0')
-    );
     
-    // Step 6: Select top winners from the sorted list
-    const winners = sortedStakers.slice(0, numberOfWinners);
-    
-    // Step 7: Generate CSV using the already formatted data
-    const csvString = await generateCsv(formattedData);
+    // Step 5: Generate CSV with properly formatted balances 
+    const csvString = await generateCsv(stakedData.map(staker => ({
+      address: staker.address,
+      balance: (Number(staker.balance || 0) / 10 ** decimals).toFixed(decimals)
+    })));
 
     res.json({
       token,
@@ -1329,7 +1199,7 @@ app.post('/stakedEsdtsSnapshotDraw', checkToken, handleUsageFee, async (req, res
       uniqueOwnerStats,
       winners,
       csvString,
-      message: `${numberOfWinners} winners have been selected from stakers of ${token}, sorted by balance in descending order.`,
+      message: `${numberOfWinners} winners have been selected from stakers of ${token}.`,
       usageFeeHash: req.usageFeeHash,
     });
   } catch (error) {
