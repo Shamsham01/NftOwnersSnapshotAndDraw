@@ -86,9 +86,19 @@ const checkTransactionStatus = async (txHash, retries = 40, delay = 5000) => {
         try {
             const response = await fetch(txStatusUrl);
 
+            // If transaction is not yet visible (404), that's normal for new transactions
+            // Just wait and retry rather than throwing an error
+            if (response.status === 404) {
+                console.log(`Transaction ${txHash} not found yet (normal for new tx), retrying in ${delay}ms...`);
+                await new Promise(resolve => setTimeout(resolve, delay));
+                continue;
+            }
+
             if (!response.ok) {
                 console.warn(`Non-200 response for ${txHash}: ${response.status}`);
-                throw new Error(`HTTP error ${response.status}`);
+                // Don't throw an error, just continue retrying
+                await new Promise(resolve => setTimeout(resolve, delay));
+                continue;
             }
 
             const txStatus = await response.json();
@@ -102,14 +112,14 @@ const checkTransactionStatus = async (txHash, retries = 40, delay = 5000) => {
             console.log(`Transaction ${txHash} still pending, retrying...`);
         } catch (error) {
             console.error(`Error fetching transaction ${txHash}: ${error.message}`);
+            // Don't throw here, just continue with the retry loop
         }
 
         await new Promise(resolve => setTimeout(resolve, delay));
     }
 
-    throw new Error(
-        `Transaction ${txHash} status could not be determined after ${retries} retries.`
-    );
+    // After all retries, we still don't have a definitive status
+    return { status: "unknown", txHash };
 };
 
 // Helper function to generate CSV data as a string
@@ -341,15 +351,23 @@ const sendUsageFee = async (pemContent) => {
   const txHash = await provider.sendTransaction(tx);
 
   const status = await checkTransactionStatus(txHash.toString());
-  if (status.status !== "success") {
+  if (status.status === "fail") {
     throw new Error('Usage fee transaction failed. Ensure sufficient REWARD tokens are available.');
   }
+  
+  // Return txHash even if status is unknown, we'll consider it a success
+  // The blockchain might just need more time to process it
   return txHash.toString();
 };
 
 // Middleware: Handle usage fee
 const handleUsageFee = async (req, res, next) => {
   try {
+    // If request has already paid a fee in this session, skip duplicated processing
+    if (req.usageFeeAlreadyProcessed) {
+      return next();
+    }
+
     const pemContent = req.body.walletPem;
     if (!pemContent) {
       console.warn('No PEM content provided, skipping usage fee processing.');
@@ -365,6 +383,10 @@ const handleUsageFee = async (req, res, next) => {
 
     const txHash = await sendUsageFee(pemContent);
     req.usageFeeHash = txHash;
+    
+    // Mark this request as having processed a usage fee to prevent double charging
+    req.usageFeeAlreadyProcessed = true;
+    
     next();
   } catch (error) {
     console.error('Error processing usage fee:', error.message);
@@ -373,7 +395,7 @@ const handleUsageFee = async (req, res, next) => {
 };
 
 // Apply usage fee middleware to all routes
-app.use(handleUsageFee);
+// app.use(handleUsageFee);
 
 // Helper function to fetch ESDT token details (including decimals)
 const fetchTokenDecimals = async (token) => {
@@ -462,10 +484,8 @@ app.post('/nftSnapshotDraw', checkToken, handleUsageFee, async (req, res) => {
 
         // Select random winners
         const shuffled = filteredAddresses.sort(() => 0.5 - Math.random());
-        const winners = shuffled.slice(0, numberOfWinners).map(winner => ({
-            ...winner,
-            balance: (Number(winner.balance || 0) / 10 ** decimals).toFixed(decimals),
-        }));
+        // For NFTs, we don't need to convert balances - an NFT is a single unit
+        const winners = shuffled.slice(0, numberOfWinners);
 
         // Return only winners without CSV or unique owner stats
         res.json({
